@@ -1,12 +1,10 @@
 import type { Activity, Entity, Link } from '../types';
-import type { KindRegistry } from '../lib/kinds';
-import { kindLabel, natureOf, NATURES } from '../lib/kinds';
-import { displayTitle } from '../lib/entity';
-import { useData } from '../store/data';
+import { TYPE_LABEL } from '../types';
+import { displayTitle, setDataReadOnly, useData } from '../store/data';
 import { useUI } from '../store/ui';
 import { layout } from '../scene/layout';
 import { applyRemote, applySnapshot, allowed, compact, diff, isApplyingRemote, type Op } from './ops';
-import { initialsOf, useSession, type Announcement, type Member, type Mode, type Presence, type Role, type Scope, type ShareStatus } from './session';
+import { initialsOf, useSession, type Announcement, type Member, type Mode, type Presence, type Role, type ShareStatus } from './session';
 
 /**
  * Connexion en direct avec le serveur du cerveau ouvert.
@@ -70,14 +68,12 @@ interface Snapshot {
   seq: number;
   entities: Record<string, Entity>;
   links: Link[];
-  kinds: KindRegistry;
   activity: Activity[];
   layout: Record<string, [number, number, number]>;
   clientId: string;
   brainId?: string;
   me: { id: string; name: string; initials: string };
   role: Role;
-  scope: Scope;
   members: Member[];
   brain: { id?: string; name: string; ownerName: string };
   presence: Presence[];
@@ -112,6 +108,7 @@ let started = false;
 let remoteToastAt = 0;
 
 const S = () => useSession.getState();
+const toast = (text: string, color = '#00e5ff', action?: { label: string; run: () => void }) => useUI.getState().toast({ text, color, action });
 
 function membersMap(list: Member[]) {
   const m: Record<string, Member> = {};
@@ -119,9 +116,16 @@ function membersMap(list: Member[]) {
   return m;
 }
 
+let deniedAt = 0;
 function onReset(snap: Snapshot) {
   backoff = 1000;
   const isOwner = snap.role === 'owner';
+  // « peut regarder » : rien ne se modifie chez lui, et un petit mot le lui rappelle
+  setDataReadOnly(snap.role === 'lecture', () => {
+    if (Date.now() - deniedAt < 4000) return;
+    deniedAt = Date.now();
+    toast('TU PEUX SEULEMENT REGARDER CE CERVEAU', '#00e5ff');
+  });
   // positions 3D : un invité reprend la carte du propriétaire ; le propriétaire complète la sienne
   layout.useSavedPositions(snap.layout || {}, isOwner ? 'merge' : 'replace');
   applySnapshot(snap);
@@ -129,12 +133,12 @@ function onReset(snap: Snapshot) {
     mode: 'online',
     role: snap.role,
     me: { ...snap.me, initials: snap.me.initials || initialsOf(snap.me.name) },
-    scope: snap.scope,
     members: membersMap(snap.members),
     online: snap.presence || [],
     ownerName: snap.brain.ownerName,
     brainName: snap.brain.name,
   });
+  seenOnline = new Set((snap.presence || []).map((p) => p.id));
   if (firstReset) {
     firstReset(true);
     firstReset = null;
@@ -145,7 +149,7 @@ function onReset(snap: Snapshot) {
 function onBatch(b: { seq: number; by: string; clientId: string | null; ops: Op[] }) {
   if (b.clientId === clientId) return; // mon propre écho : déjà appliqué chez moi
   applyRemote(b.ops, { fx: true });
-  // une pensée capturée par quelqu'un d'autre : discrète notification
+  // un élément créé par quelqu'un d'autre : discrète notification
   if (b.by !== S().me.id) {
     const puts = b.ops.filter((o): o is Extract<Op, { t: 'put' }> => o.t === 'put');
     const now = Date.now();
@@ -153,18 +157,25 @@ function onBatch(b: { seq: number; by: string; clientId: string | null; ops: Op[
       remoteToastAt = now;
       const e = puts[0].e;
       const who = b.by === 'owner' ? S().ownerName : S().members[b.by]?.name || 'Quelqu’un';
-      const kinds = useData.getState().kinds;
-      useUI.getState().toast({
-        text: `${who.toUpperCase()} · ${kindLabel(e.kind).toUpperCase()} · ${displayTitle(e)}${puts.length > 1 ? ` · +${puts.length - 1}` : ''}`,
-        color: NATURES[natureOf(e, kinds)].hex,
-        action: { label: 'VOIR', run: () => useUI.getState().openEntity(e.id) },
+      toast(`${who.toUpperCase()} · ${TYPE_LABEL[e.type].toUpperCase()} · ${displayTitle(e)}${puts.length > 1 ? ` · +${puts.length - 1}` : ''}`, e.color, {
+        label: 'VOIR',
+        run: () => useUI.getState().openEntity(e.id),
       });
     }
   }
 }
 
+/** Qui était déjà là : pour annoncer les arrivées (« Léa est là ») */
+let seenOnline = new Set<string>();
+
 function onPresence(p: { online: Presence[] }) {
   useSession.setState({ online: p.online });
+  const me = S().me.id;
+  const now = new Set(p.online.map((x) => x.id));
+  for (const x of p.online) {
+    if (x.id !== me && !seenOnline.has(x.id)) toast(`${x.name.toUpperCase()} EST LÀ · ${x.role === 'lecture' ? 'REGARDE' : x.role === 'owner' ? 'PROPRIÉTAIRE' : 'PEUT MODIFIER'}`, '#39ff88');
+  }
+  seenOnline = now;
   // suivre quelqu'un : la caméra va où il regarde
   const f = S().following;
   if (!f) return;
@@ -174,7 +185,7 @@ function onPresence(p: { online: Presence[] }) {
     return;
   }
   const ui = useUI.getState();
-  if (who.focus && who.focus !== ui.selectedId && useData.getState().entities[who.focus]) ui.openEntity(who.focus);
+  if (who.focus && who.focus !== ui.selectedId && who.focus !== ui.editorId && useData.getState().entities[who.focus]) ui.openEntity(who.focus);
 }
 
 const BYE_MODE: Record<string, Mode> = {
@@ -188,8 +199,13 @@ const BYE_MODE: Record<string, Mode> = {
 
 function onBye(d: { reason: string }) {
   stopTransport();
+  // nouveau rôle sur le serveur (nommé admin, par exemple) : on recharge pour l'afficher
+  if (d.reason === 'reload') {
+    void flush().finally(() => location.reload());
+    return;
+  }
   const mode = BYE_MODE[d.reason] ?? 'closed';
-  // le créateur ne « perd » jamais son propre cerveau : seulement une reconnexion
+  // le propriétaire ne « perd » jamais son propre cerveau : seulement une reconnexion
   useSession.setState({ mode: S().role === 'owner' && mode === 'revoked' ? 'closed' : mode });
   if (mode === 'closed' || mode === 'maintenance') scheduleReconnect(mode === 'maintenance' ? 20000 : 5000);
 }
@@ -207,6 +223,12 @@ function dispatch(type: string, data: unknown) {
         return useSession.setState({ members: membersMap((data as { members: Member[] }).members) });
       case 'share': {
         const d = data as ShareStatus;
+        // quelqu'un vient de rejoindre mon cerveau
+        const before = S().share;
+        if (before) {
+          const known = new Set(before.members.map((m) => m.id));
+          for (const m of d.members) if (!known.has(m.id)) toast(`${m.name.toUpperCase()} A REJOINT TON CERVEAU`, '#39ff88', { label: 'VOIR', run: () => useSession.setState({ shareOpen: true }) });
+        }
         return useSession.setState({ share: d, ownerName: d.ownerName, brainName: d.brainName });
       }
       case 'brain': {
@@ -220,8 +242,12 @@ function dispatch(type: string, data: unknown) {
       }
       case 'announce':
         return useSession.setState({ announcement: (data as Announcement | null) ?? null });
-      case 'staff':
-        return useSession.setState({ staff: data as { feedback: number; errors: number; accounts: number } });
+      case 'staff': {
+        const d = data as { feedback: number; errors: number; accounts: number };
+        const before = S().staff;
+        if (before && d.accounts > before.accounts) toast('NOUVEAU COMPTE SUR TON SYNAPSE', '#39ff88', { label: 'VOIR', run: () => useSession.setState({ adminOpen: true }) });
+        return useSession.setState({ staff: d });
+      }
       case 'bye':
         return onBye(data as { reason: string });
     }
@@ -368,12 +394,9 @@ async function flush(): Promise<void> {
   try {
     const r = await api<{ seq: number; rejected: { i: number; reason: string }[]; fixes: Op[] }>('/api/ops', { clientId, ops: batch });
     if (r.fixes?.length) applyRemote(r.fixes, { fx: false });
-    if (r.rejected?.some((x) => x.reason === 'forbidden')) {
-      useUI.getState().toast({ text: 'CERTAINES MODIFICATIONS DÉPASSENT TES DROITS : ANNULÉES', color: '#ff4d7a' });
-    }
-    if (r.rejected?.some((x) => x.reason === 'limit')) {
-      useUI.getState().toast({ text: 'LIMITE DE NEURONES ATTEINTE SUR CE SERVEUR', color: '#ff4d7a' });
-    }
+    if (r.rejected?.some((x) => x.reason === 'forbidden')) toast('TU PEUX SEULEMENT REGARDER CE CERVEAU : MODIFICATION ANNULÉE', '#ff4d6d');
+    if (r.rejected?.some((x) => x.reason === 'locked')) toast('QUELQU’UN ÉCRIT DÉJÀ ICI : ATTENDS QU’IL AIT FINI', '#ffb020');
+    if (r.rejected?.some((x) => x.reason === 'limit')) toast('LIMITE D’ÉLÉMENTS ATTEINTE SUR CE SERVEUR', '#ff4d6d');
   } catch (e) {
     const status = e instanceof ApiError ? e.status : 0;
     if (status === 401 || status === 403) {
@@ -398,7 +421,7 @@ async function flush(): Promise<void> {
 // ───────────────────────── présence
 let presenceTimer: number | undefined;
 let lastPresence = '';
-function sendPresence(force = false) {
+export function sendPresence(force = false) {
   if (S().mode !== 'online') return;
   if (presenceTimer !== undefined && !force) return;
   const go = () => {
@@ -413,7 +436,7 @@ function sendPresence(force = false) {
   if (force) {
     if (presenceTimer !== undefined) window.clearTimeout(presenceTimer);
     go();
-  } else presenceTimer = window.setTimeout(go, 250);
+  } else presenceTimer = window.setTimeout(go, 120);
 }
 
 // ───────────────────────── positions 3D (le propriétaire les partage)
@@ -447,13 +470,13 @@ export function startSync(): Promise<boolean> {
     }, 20000);
   });
   connect();
-  // toute modification locale (capture, édition, lien…) devient une opération envoyée au serveur
+  // toute modification locale (création, édition, lien…) devient une opération envoyée au serveur
   unsubscribers.push(
     useData.subscribe((next, prev) => {
       if (isApplyingRemote()) return;
       const mode = S().mode;
       if (mode !== 'online' && mode !== 'offline') return;
-      queue(allowed(diff(prev, next), prev));
+      queue(allowed(diff(prev, next)));
     }),
   );
   unsubscribers.push(
@@ -463,7 +486,7 @@ export function startSync(): Promise<boolean> {
   );
   unsubscribers.push(
     useSession.subscribe((s, p) => {
-      if (s.editing !== p.editing) sendPresence();
+      if (s.editing !== p.editing) sendPresence(true);
     }),
   );
   const hb = window.setInterval(() => sendPresence(true), 25000);

@@ -1,44 +1,13 @@
 import * as THREE from 'three';
+import { layout } from './layout';
+
+const MAX = 420;
+const TRAIL = 7;
 
 /**
- * Impulsions : des points de lumière néon qui voyagent le long des connexions (une traînée derrière
- * une tête blanche brûlante), et des étincelles libres pour les éclats (naissance, tâche accomplie…).
- * Un seul appel de dessin pour tout. À l'arrivée, le neurone touché s'illumine (et peut répondre).
+ * Light impulses travelling along the axons (curves between constellations)
+ * plus free sparks for bursts. One Points draw call.
  */
-const MAX = 640;
-const TRAIL = 10;
-
-export type PulseLevel = 'vif' | 'calme' | 'off';
-const KEY = 'synapse-impulsions';
-const reduced = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-let level: PulseLevel = (() => {
-  try {
-    const v = localStorage.getItem(KEY);
-    if (v === 'vif' || v === 'calme' || v === 'off') return v;
-  } catch {
-    /* pas de stockage : réglage par défaut */
-  }
-  return reduced() ? 'calme' : 'vif';
-})();
-export const pulseLevel = () => level;
-export function setPulseLevel(l: PulseLevel) {
-  level = l;
-  try {
-    localStorage.setItem(KEY, l);
-  } catch {
-    /* pas grave */
-  }
-}
-export const PULSE_LABEL: Record<PulseLevel, string> = { vif: 'vives', calme: 'calmes', off: 'arrêtées' };
-
-export interface Arrival {
-  edge: number;
-  /** vers quel bout du lien : true = de a vers b */
-  fromA: boolean;
-  target: number;
-  strength: number;
-}
-
 export class PulseSystem {
   readonly geo = new THREE.BufferGeometry();
   private pos = new Float32Array(MAX * TRAIL * 3);
@@ -46,7 +15,7 @@ export class PulseSystem {
   private size = new Float32Array(MAX * TRAIL);
   private int = new Float32Array(MAX * TRAIL);
 
-  private kind = new Uint8Array(MAX); // 0 libre · 1 impulsion · 2 étincelle
+  private kind = new Uint8Array(MAX); // 0 free · 1 pulse · 2 spark
   private edge = new Int32Array(MAX);
   private t = new Float32Array(MAX);
   private speed = new Float32Array(MAX);
@@ -60,23 +29,16 @@ export class PulseSystem {
   private maxLife = new Float32Array(MAX);
   private cursor = 0;
   spawned = 0;
-  readonly arrivals: Arrival[] = [];
 
   constructor() {
-    const phase = new Float32Array(MAX * TRAIL);
-    for (let i = 0; i < phase.length; i++) phase[i] = Math.random();
-    this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
+    const phase = new Float32Array(MAX * TRAIL).fill(0.5);
+    const p = new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage);
+    this.geo.setAttribute('position', p);
     this.geo.setAttribute('aColor', new THREE.BufferAttribute(this.col, 3).setUsage(THREE.DynamicDrawUsage));
     this.geo.setAttribute('aSize', new THREE.BufferAttribute(this.size, 1).setUsage(THREE.DynamicDrawUsage));
     this.geo.setAttribute('aInt', new THREE.BufferAttribute(this.int, 1).setUsage(THREE.DynamicDrawUsage));
     this.geo.setAttribute('aPhase', new THREE.BufferAttribute(phase, 1));
     this.geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
-  }
-
-  get active() {
-    let n = 0;
-    for (let i = 0; i < MAX; i++) if (this.kind[i] === 1) n++;
-    return n;
   }
 
   private alloc(): number {
@@ -87,19 +49,18 @@ export class PulseSystem {
         return i;
       }
     }
-    // tout est pris : on recycle la plus ancienne place
     const i = this.cursor;
     this.cursor = (i + 1) % MAX;
     return i;
   }
 
-  /** Impulsion le long du lien `e` (fromA : de a vers b), à `speed` (fraction du lien par seconde) */
-  pulse(e: number, fromA: boolean, strength: number, color: THREE.Color, target: number, speed: number) {
+  /** Impulse along edge `e`. fromA = travels a→b. target = node index flashed on arrival (-1 none) */
+  pulse(e: number, fromA: boolean, strength: number, color: THREE.Color, target: number) {
     const i = this.alloc();
     this.kind[i] = 1;
     this.edge[i] = e;
     this.t[i] = 0;
-    this.speed[i] = speed;
+    this.speed[i] = (0.32 + Math.random() * 0.22) * (strength > 1.2 ? 0.8 : 1);
     this.dir[i] = fromA ? 1 : -1;
     this.str[i] = strength;
     this.rgb[i * 3] = color.r;
@@ -109,7 +70,6 @@ export class PulseSystem {
     this.spawned++;
   }
 
-  /** Éclat d'étincelles autour d'un point (naissance, accomplissement, nouveau lien) */
   burst(center: THREE.Vector3, color: THREE.Color, n: number, speed: number, life = 1.4) {
     for (let k = 0; k < n; k++) {
       const i = this.alloc();
@@ -132,52 +92,46 @@ export class PulseSystem {
     }
   }
 
-  private clear(i: number) {
-    this.kind[i] = 0;
-    for (let j = 0; j < TRAIL; j++) this.int[i * TRAIL + j] = 0;
-  }
-
-  /** Les liens changent de numéro quand le réseau est reconstruit : les impulsions en vol s'éteignent */
+  /** Edge indices change when the graph is rebuilt: drop impulses in flight (sparks keep going) */
   dropEdgePulses() {
-    for (let i = 0; i < MAX; i++) if (this.kind[i] === 1) this.clear(i);
+    for (let i = 0; i < MAX; i++) {
+      if (this.kind[i] !== 1) continue;
+      this.kind[i] = 0;
+      for (let j = 0; j < TRAIL; j++) this.int[i * TRAIL + j] = 0;
+    }
   }
 
-  /** Tout éteindre (impulsions arrêtées) */
-  clearAll() {
-    for (let i = 0; i < MAX; i++) if (this.kind[i] !== 0) this.clear(i);
-  }
-
-  /** curves : 9 nombres par lien (départ, point de contrôle, arrivée) */
+  /** curves: 9 floats per edge (A, control, B) */
   update(dt: number, curves: Float32Array, edgeCount: number) {
     const { pos, col, size, int } = this;
-    this.arrivals.length = 0;
+    let active = 0;
     for (let i = 0; i < MAX; i++) {
       const base = i * TRAIL;
       const k = this.kind[i];
       if (k === 1) {
         const e = this.edge[i];
         if (e >= edgeCount) {
-          this.clear(i);
+          this.kind[i] = 0;
+          for (let j = 0; j < TRAIL; j++) int[base + j] = 0;
           continue;
         }
         this.t[i] += this.speed[i] * dt;
         if (this.t[i] >= 1) {
-          this.arrivals.push({ edge: e, fromA: this.dir[i] > 0, target: this.target[i], strength: this.str[i] });
-          this.clear(i);
+          const tg = this.target[i];
+          const node = tg >= 0 ? layout.list[tg] : undefined;
+          if (node) node.flash = Math.min(2.4, node.flash + 0.3 * this.str[i]);
+          this.kind[i] = 0;
+          for (let j = 0; j < TRAIL; j++) int[base + j] = 0;
           continue;
         }
+        active++;
         const c = e * 9;
         const ax = curves[c], ay = curves[c + 1], az = curves[c + 2];
         const cx = curves[c + 3], cy = curves[c + 4], cz = curves[c + 5];
         const bx = curves[c + 6], by = curves[c + 7], bz = curves[c + 8];
         const s = this.str[i];
-        // traînée continue : ses points se chevauchent, quelle que soit la longueur du lien
-        const len = Math.hypot(bx - ax, by - ay, bz - az) || 30;
-        const gap = Math.min(0.02, Math.max(0.003, 0.75 / len));
-        // apparition et disparition douces aux deux bouts du lien
-        const ends = Math.min(1, this.t[i] * 8, (1 - this.t[i]) * 8);
         for (let j = 0; j < TRAIL; j++) {
-          let u = this.t[i] - j * gap;
+          let u = this.t[i] - j * 0.016;
           const o = base + j;
           if (u < 0) {
             int[o] = 0;
@@ -189,20 +143,22 @@ export class PulseSystem {
           pos[o * 3 + 1] = iu * iu * ay + 2 * iu * u * cy + u * u * by;
           pos[o * 3 + 2] = iu * iu * az + 2 * iu * u * cz + u * u * bz;
           const f = 1 - j / TRAIL;
-          // tête blanche brûlante, traînée de la couleur du neurone qui l'a envoyée
-          const w = j === 0 ? 0.55 : j === 1 ? 0.2 : 0.05;
+          // head is whiter
+          const w = j === 0 ? 0.45 : 0.12;
           col[o * 3] = this.rgb[i * 3] * (1 - w) + w;
           col[o * 3 + 1] = this.rgb[i * 3 + 1] * (1 - w) + w;
           col[o * 3 + 2] = this.rgb[i * 3 + 2] * (1 - w) + w;
-          size[o] = (0.7 + 0.5 * Math.min(s, 1.6)) * (0.35 + 0.65 * f);
-          int[o] = (1.0 + s * 0.9) * f * f * ends;
+          size[o] = (0.75 + 0.55 * s) * (0.45 + 0.55 * f);
+          int[o] = (0.9 + s * 0.9) * f * f;
         }
       } else if (k === 2) {
         this.life[i] -= dt;
         if (this.life[i] <= 0) {
-          this.clear(i);
+          this.kind[i] = 0;
+          for (let j = 0; j < TRAIL; j++) int[base + j] = 0;
           continue;
         }
+        active++;
         const drag = Math.exp(-dt * 1.9);
         this.sv[i * 3] *= drag;
         this.sv[i * 3 + 1] *= drag;
@@ -213,13 +169,14 @@ export class PulseSystem {
         const a = this.life[i] / this.maxLife[i];
         for (let j = 0; j < TRAIL; j++) {
           const o = base + j;
+          // short streak behind the spark
           pos[o * 3] = this.sp[i * 3] - this.sv[i * 3] * j * 0.012;
           pos[o * 3 + 1] = this.sp[i * 3 + 1] - this.sv[i * 3 + 1] * j * 0.012;
           pos[o * 3 + 2] = this.sp[i * 3 + 2] - this.sv[i * 3 + 2] * j * 0.012;
           col[o * 3] = this.rgb[i * 3] * 0.75 + 0.25;
           col[o * 3 + 1] = this.rgb[i * 3 + 1] * 0.75 + 0.25;
           col[o * 3 + 2] = this.rgb[i * 3 + 2] * 0.75 + 0.25;
-          size[o] = 0.42 * (1 - (j / TRAIL) * 0.6);
+          size[o] = 0.42 * (1 - j / TRAIL * 0.6);
           int[o] = a * a * 1.6 * (1 - j / TRAIL);
         }
       }
@@ -229,5 +186,6 @@ export class PulseSystem {
     g.aColor.needsUpdate = true;
     g.aSize.needsUpdate = true;
     g.aInt.needsUpdate = true;
+    return active;
   }
 }

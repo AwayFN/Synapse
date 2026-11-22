@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { api, ApiError, clientId, openBrain } from '../sync/client';
 import { deName, initialsOf, linkBases, ROLE_LABEL, SERVER_ROLE_LABEL, useSession } from '../sync/session';
 import { useUI } from '../store/ui';
-import { ALERT_HEX } from '../lib/kinds';
+import { ALERT_HEX } from '../lib/color';
 import { Corners, cvar, Kbd } from './common';
 import { QrCode } from './Qr';
+import { JoinFriend, ReachButton, ShareSheetButton } from './Reach';
 
 function copy(text: string) {
   return navigator.clipboard.writeText(text).catch(() => {
@@ -39,7 +40,7 @@ const errText = (e: unknown, map: Record<string, string>) => {
   return msg || map[code ?? ''] || 'Ça n’a pas marché. Réessaie.';
 };
 
-/** HUD : mon compte (initiales), et l'espace créateur pour l'équipe */
+/** HUD : mon compte (initiales), et l'espace admin (créateur et admins seulement) */
 export function AccountChip() {
   const mode = useSession((s) => s.mode);
   const account = useSession((s) => s.account);
@@ -53,10 +54,10 @@ export function AccountChip() {
       {account?.staff && (
         <button
           className="glass neon hud text-[10px] text-white/80 hover:text-white px-3 py-2 flex items-center gap-2"
-          title="Espace créateur : comptes, statistiques, retours, réglages"
+          title="Espace admin : utilisateurs, statistiques, retours, réglages"
           onClick={() => useSession.setState({ adminOpen: true })}
         >
-          <span className="text-white">◈</span> <span className="max-md:hidden">Espace créateur</span>
+          <span className="text-white">◈</span> <span className="max-md:hidden">Espace admin</span>
           {pending > 0 && <span className="mono text-[9px] px-1.5 rounded-full bg-[rgb(var(--alert)/0.25)] text-white">{pending}</span>}
         </button>
       )}
@@ -152,7 +153,6 @@ function Brains() {
           )}
         </div>
       ))}
-      <div className="text-[11px] text-white/35 mt-2">Pour rejoindre le cerveau de quelqu’un, ouvre le lien d’invitation qu’il t’envoie.</div>
     </div>
   );
 }
@@ -161,51 +161,49 @@ function InviteFriend() {
   const invite = useSession((s) => s.server?.invite);
   const account = useSession((s) => s.account);
   const [note, setNote] = useState('');
-  const [link, setLink] = useState<string | null>(null);
+  const [link, setLink] = useState<{ url: string; label: string } | null>(null);
   const [left, setLeft] = useState<number | null | undefined>(invite?.left);
   const [error, setError] = useState<string | null>(null);
   if (!invite) return <div className="text-[12px] text-white/40">Les invitations à Synapse sont fermées sur ce serveur.</div>;
-  const base = linkBases()[0];
+  const message = link
+    ? `${note ? `${note}, ` : ''}viens essayer Synapse, mon second cerveau en 3D : crée ton compte ici ${link.url}\nRien à installer, ça s’ouvre dans le navigateur (ordinateur ou téléphone).\n— ${account?.name || ''}`
+    : '';
   return (
     <div className="flex flex-col gap-3">
       <div className="text-[12px] text-white/50 leading-relaxed">
-        Ton ami crée son compte avec ce lien et a aussitôt son propre cerveau. Rien à installer : un navigateur suffit.
+        Ton ami crée son compte sur ton Synapse avec ce lien, et a aussitôt son propre cerveau (tu ne vois jamais ce qu’il écrit). Rien à installer : un
+        navigateur suffit. Tu le vois dans la liste des utilisateurs (espace admin).
         {left != null && ` Il te reste ${left} invitation${left > 1 ? 's' : ''} ce mois-ci.`}
       </div>
-      <div className="flex gap-2">
-        <input className="field !w-[220px]" placeholder="Pour qui ? (facultatif)" value={note} onChange={(e) => setNote(e.target.value)} maxLength={60} />
-        <button
-          className="btn btn-primary"
-          disabled={left === 0}
-          onClick={async () => {
-            setError(null);
-            // pas d'adresse joignable par les autres : inutile de créer (et de dépenser) une invitation
-            if (!base) return setError('Aucune adresse publique pour l’instant : ouvre d’abord l’accès Internet (bouton Partager, ou espace créateur → Serveur).');
-            try {
-              const r = await api<{ token: string; left: number | null }>('/api/signup/invite', { note });
-              setLeft(r.left);
-              setLink(`${base.url}/#inscription=${r.token}`);
-            } catch (e) {
-              setError(errText(e, { quota: 'Tu as utilisé toutes tes invitations du mois.', closed: 'Les inscriptions sont fermées.', invite: 'Seule l’équipe peut inviter sur ce serveur.' }));
-            }
-          }}
-        >
-          Créer le lien
-        </button>
-      </div>
+      <input className="field !w-[260px] max-w-full" placeholder="Pour qui ? (facultatif)" value={note} onChange={(e) => setNote(e.target.value)} maxLength={60} />
+      <ReachButton
+        label="Créer le lien d’inscription"
+        kind="internet"
+        disabled={left === 0}
+        onReady={async (base) => {
+          setError(null);
+          try {
+            const r = await api<{ token: string; left: number | null }>('/api/signup/invite', { note });
+            setLeft(r.left);
+            setLink({ url: `${base.url}/#inscription=${r.token}`, label: base.label });
+          } catch (e) {
+            setError(errText(e, { quota: 'Tu as utilisé toutes tes invitations du mois.', closed: 'Les inscriptions sont fermées.', invite: 'Seule l’équipe peut inviter sur ce serveur.' }));
+          }
+        }}
+      />
       {error && <div className="text-[12px] text-[rgb(var(--alert))]">{error}</div>}
       {link && (
-        <div className="glass p-3 flex flex-col gap-2 anim-pop">
+        <div className="glass p-3 flex flex-col gap-2 anim-pop" data-signup-ready>
           <div className="hud text-[9.5px] text-white/70">Lien prêt · valable 7 jours, pour une personne</div>
-          <div className="flex items-center gap-2">
-            <input readOnly value={link} className="field field-mono !text-[11px] !py-1.5 flex-1 min-w-0" onFocus={(e) => e.currentTarget.select()} />
-            <CopyButton text={link} label="Copier le lien" />
-            <CopyButton
-              text={`${note ? `${note}, ` : ''}viens essayer Synapse, mon second cerveau en 3D : crée ton compte ici ${link}\n— ${account?.name || ''}`}
-              label="Copier un message"
-            />
+          <div className="flex items-center gap-2 flex-wrap">
+            <input readOnly value={link.url} className="field field-mono !text-[11px] !py-1.5 flex-1 min-w-[160px]" onFocus={(e) => e.currentTarget.select()} />
+            <CopyButton text={link.url} label="Copier le lien" />
+            <CopyButton text={message} label="Copier un message" />
+            <ShareSheetButton text={message} />
           </div>
-          {base?.label === 'Internet' && <div className="text-[11px] text-white/38">Adresse temporaire : elle change si Synapse redémarre sur ton PC.</div>}
+          {link.label === 'Internet' && (
+            <div className="text-[11px] text-white/38">Adresse gratuite : elle change quand Synapse redémarre sur ton PC. Ton ami garde son compte : il se reconnecte à la nouvelle adresse.</div>
+          )}
         </div>
       )}
     </div>
@@ -217,15 +215,9 @@ function PhoneLink() {
   const [url, setUrl] = useState<string | null>(null);
   const [label, setLabel] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const make = async () => {
+  const make = async (base = linkBases()[0]) => {
     setError(null);
-    const base = linkBases()[0];
-    if (!base) {
-      setError('Ouvre d’abord un accès avec le bouton Partager : « Même Wi-Fi » si ton téléphone est à la maison, ou « Depuis n’importe où » pour partout.');
-      return;
-    }
-    setBusy(true);
+    if (!base) return;
     try {
       const r = await api<{ token: string }>('/api/account/device-link', {});
       setUrl(`${base.url}/#connexion=${r.token}`);
@@ -233,7 +225,6 @@ function PhoneLink() {
     } catch {
       setError('Impossible pour l’instant. Réessaie.');
     }
-    setBusy(false);
   };
   if (!url) {
     return (
@@ -241,9 +232,7 @@ function PhoneLink() {
         <div className="text-[12px] text-white/50 leading-relaxed">
           Retrouve ton cerveau sur ton téléphone, en direct avec ton ordinateur : un QR code à viser avec l’appareil photo, et tu es connecté. Rien à installer.
         </div>
-        <button className="btn btn-primary w-fit" disabled={busy} onClick={() => void make()}>
-          Afficher le QR code
-        </button>
+        <ReachButton label="Afficher le QR code" kind="any" lanChoice onReady={(base) => make(base)} />
         {error && <div className="text-[12px] text-[rgb(var(--alert))]">{error}</div>}
       </div>
     );
@@ -399,7 +388,7 @@ function DangerZone() {
                   await api('/api/account/delete', { confirm, password });
                   location.replace('/');
                 } catch (e) {
-                  setError(errText(e, { 'last-creator': 'Tu es le seul créateur : nomme d’abord un autre créateur dans l’espace créateur.', current: 'Mot de passe incorrect.' }));
+                  setError(errText(e, { 'last-creator': 'Tu es le dernier admin : nomme d’abord un autre admin dans l’espace admin.', current: 'Mot de passe incorrect.' }));
                 }
               }}
             >
@@ -441,6 +430,10 @@ export function AccountPanel() {
 
         <Section title={account ? 'Mes cerveaux' : 'Cerveaux ouverts'}>
           <Brains />
+        </Section>
+
+        <Section title="Rejoindre le cerveau d’un ami">
+          <JoinFriend />
         </Section>
 
         {account && (
@@ -503,7 +496,7 @@ export function FeedbackDialog() {
         <div className="hud text-[11px] text-white/80">Écrire à l’équipe de Synapse</div>
         {state === 'sent' ? (
           <>
-            <div className="text-[14px] text-white/70 mt-4 leading-relaxed">Merci ! Ton message est arrivé dans l’espace créateur.</div>
+            <div className="text-[14px] text-white/70 mt-4 leading-relaxed">Merci ! Ton message est arrivé chez les admins de Synapse.</div>
             <button className="btn mt-6" onClick={close}>
               Fermer
             </button>

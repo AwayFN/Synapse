@@ -2,6 +2,18 @@
 rem Synapse : double-clique sur ce fichier pour ouvrir l'application.
 setlocal
 title Synapse
+rem Lance depuis le .zip sans l'avoir extrait : Windows n'a sorti que ce fichier, le reste manque
+if not exist "%~dp0app\scripts\synapse.mjs" (
+  echo.
+  echo   Synapse doit d'abord etre extrait du fichier .zip telecharge.
+  echo.
+  echo   1. Ferme cette fenetre.
+  echo   2. Clic droit sur le fichier .zip, puis "Extraire tout", puis "Extraire".
+  echo   3. Dans le dossier extrait, double-clique sur "Lancer Synapse".
+  echo.
+  pause
+  exit /b 1
+)
 set "NODE="
 rem Node.js: PATH first, else the newest portable install (last folder in name order)
 for /f "delims=" %%i in ('where node.exe 2^>nul') do if not defined NODE set "NODE=%%i"

@@ -32,6 +32,10 @@ const DEFAULTS = {
   tunnelToken: '',
   share: { lan: false, internet: false },
   legacyBrain: '',
+  /** adresse Internet gratuite actuelle, et la précédente (elle change à chaque redémarrage) */
+  netUrl: '',
+  netUrlPrev: '',
+  netUrlAt: 0,
 };
 
 const int = (v, min, max, d) => {
@@ -87,7 +91,7 @@ export class Settings {
 
   /** Ce que l'espace créateur affiche (le jeton du tunnel ne repart jamais vers un navigateur) */
   public() {
-    const { tunnelToken, share, legacyBrain, v, ...rest } = this.d;
+    const { tunnelToken, share, legacyBrain, v, netUrl, netUrlPrev, netUrlAt, ...rest } = this.d;
     return { ...rest, tunnelTokenSet: !!tunnelToken, defaultTerms: DEFAULT_TERMS };
   }
 
@@ -119,6 +123,9 @@ export class Settings {
     if (p.announcement !== undefined) put('announcement', p.announcement);
     if (p.share !== undefined) put('share', { ...d.share, ...p.share });
     if (p.legacyBrain !== undefined) put('legacyBrain', String(p.legacyBrain));
+    if (p.netUrl !== undefined) put('netUrl', cleanUrl(p.netUrl));
+    if (p.netUrlPrev !== undefined) put('netUrlPrev', cleanUrl(p.netUrlPrev));
+    if (p.netUrlAt !== undefined) put('netUrlAt', int(p.netUrlAt, 0, 8.64e15, 0));
     if (changed.length) this.save();
     return changed;
   }

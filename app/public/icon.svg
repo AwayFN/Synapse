@@ -2,23 +2,19 @@
   <defs>
     <radialGradient id="g" cx="50%" cy="50%" r="50%">
       <stop offset="0%" stop-color="#ffffff"/>
-      <stop offset="28%" stop-color="#d6e2f5" stop-opacity="0.85"/>
-      <stop offset="70%" stop-color="#d6e2f5" stop-opacity="0.12"/>
-      <stop offset="100%" stop-color="#04060a" stop-opacity="0"/>
+      <stop offset="22%" stop-color="#ff2e88"/>
+      <stop offset="60%" stop-color="#7a1cff" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0"/>
     </radialGradient>
   </defs>
-  <rect width="512" height="512" rx="96" fill="#04060a"/>
-  <g fill="none" stroke-linecap="round">
-    <path d="M256 256 Q170 170 118 150" stroke="#d6e2f5" stroke-opacity="0.5" stroke-width="6"/>
-    <path d="M256 256 Q340 160 394 128" stroke="#ecb35e" stroke-opacity="0.55" stroke-width="5"/>
-    <path d="M256 256 Q350 330 388 384" stroke="#5ec8d4" stroke-opacity="0.5" stroke-width="4"/>
-    <path d="M256 256 Q180 330 126 372" stroke="#d6e2f5" stroke-opacity="0.35" stroke-width="3"/>
+  <rect width="512" height="512" rx="96" fill="#000"/>
+  <g stroke="#00e5ff" stroke-opacity="0.55" stroke-width="6" fill="none">
+    <path d="M256 256 L110 140"/><path d="M256 256 L400 120"/><path d="M256 256 L392 392"/><path d="M256 256 L120 380"/>
   </g>
-  <circle cx="118" cy="150" r="20" fill="#d6e2f5" fill-opacity="0.35" stroke="#d6e2f5" stroke-width="5"/>
-  <rect x="378" y="112" width="32" height="32" transform="rotate(45 394 128)" fill="#ecb35e" fill-opacity="0.35" stroke="#ecb35e" stroke-width="5"/>
-  <circle cx="388" cy="384" r="20" fill="none" stroke="#5ec8d4" stroke-width="5"/>
-  <path d="M388 384 L388 370" stroke="#5ec8d4" stroke-width="5" stroke-linecap="round"/>
-  <circle cx="126" cy="372" r="13" fill="#a89cec" fill-opacity="0.4" stroke="#a89cec" stroke-width="4"/>
-  <circle cx="256" cy="256" r="120" fill="url(#g)"/>
-  <circle cx="256" cy="256" r="26" fill="#fff"/>
+  <circle cx="110" cy="140" r="22" fill="#00e5ff"/>
+  <circle cx="400" cy="120" r="18" fill="#a855f7"/>
+  <circle cx="392" cy="392" r="24" fill="#39ff88"/>
+  <circle cx="120" cy="380" r="16" fill="#ffb020"/>
+  <circle cx="256" cy="256" r="150" fill="url(#g)"/>
+  <circle cx="256" cy="256" r="34" fill="#fff"/>
 </svg>

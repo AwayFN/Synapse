@@ -1,11 +1,11 @@
 import { useEffect } from 'react';
 import { Scene } from './scene/Scene';
+import { SceneGuard } from './scene/SceneGuard';
 import { LabelLayer } from './ui/Labels';
 import { Hud } from './ui/Hud';
 import { DetailPanel } from './ui/DetailPanel';
 import { KanbanView } from './ui/KanbanView';
 import { AgendaView } from './ui/AgendaView';
-import { FluxView } from './ui/FluxView';
 import { NoteEditor } from './ui/NoteEditor';
 import { CommandPalette } from './ui/CommandPalette';
 import { Toasts } from './ui/Toasts';
@@ -23,19 +23,20 @@ export function App() {
   useHotkeys();
   useEffect(() => {
     setStorageErrorHandler(() =>
-      useUI.getState().toast({ text: 'STOCKAGE PLEIN · EXPORTE TES DONNÉES (CTRL K PUIS >)', color: '#ff4d7a' }, 8000),
+      useUI.getState().toast({ text: 'STOCKAGE PLEIN · EXPORTEZ VOS DONNÉES (CTRL K)', color: '#ff4d6d' }, 8000),
     );
   }, []);
   return (
-    <div className="fixed inset-0 bg-[rgb(var(--ink))]">
+    <div className="fixed inset-0 bg-black">
       <div id="stage" className="absolute inset-0 select-none overflow-hidden">
-        <Scene />
+        <SceneGuard>
+          <Scene />
+        </SceneGuard>
         <LabelLayer />
         <PresenceTags />
         <Hud />
       </div>
       <DetailPanel />
-      <FluxView />
       <KanbanView />
       <AgendaView />
       <NoteEditor />

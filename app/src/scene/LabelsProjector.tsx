@@ -1,8 +1,7 @@
 import { useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { layout } from './layout';
-import { visuals } from './visual';
+import { layout, LABEL_RANGE } from './layout';
 import { labelEls, reticle } from './telemetry';
 import { useUI } from '../store/ui';
 
@@ -24,9 +23,8 @@ interface Cand {
   w: number;
 }
 
+const TYPE_PRIO = { project: 300, note: 200, slot: 120, task: 100 } as const;
 const widthCache = new WeakMap<HTMLElement, { w: number; at: number }>();
-const MAX_LABELS = 140;
-const MAX_GHOST_LABELS = 50;
 
 /**
  * Projects every constellation to screen space and moves its DOM label (no React re-render).
@@ -50,9 +48,7 @@ export function LabelsProjector() {
       frame.neighbors = sel ? layout.neighbors(sel) : new Set();
     }
 
-    // 1. calcul pur (aucune lecture ni écriture du DOM)
     const cands: Cand[] = [];
-    const hide: HTMLElement[] = [];
     for (const n of layout.list) {
       const el = labelEls.get(n.id);
       if (!el) continue;
@@ -61,16 +57,21 @@ export function LabelsProjector() {
       const be = smooth(0.55, 1, n.birth);
       const isHov = hov === n.id;
       const isSel = sel === n.id;
-      const vz = visuals.get(n.id);
-      // les petits neurones perdent leur étiquette plus tôt : le lointain reste lisible
-      const range = (230 + vz.importance * 620) * (isSel || frame.neighbors.has(n.id) ? 1.8 : 1) * (0.75 + 0.25 * vz.vitality);
+      // small constellations lose their label sooner: keeps the far field readable
+      const range = LABEL_RANGE[n.type] * (isSel ? 2 : 1);
       const a = n.vis * be * (1 - smooth(range * 0.55, range, dist));
       if (v.z > 1 || (a < 0.03 && !isHov) || Math.abs(v.x) > 1.25 || Math.abs(v.y) > 1.25) {
-        hide.push(el);
+        if (el.style.visibility !== 'hidden') el.style.visibility = 'hidden';
         continue;
       }
-      const wc = widthCache.get(el);
-      const detail = isHov || isSel ? 1 : 1 - smooth(60 + n.radius * 3, 110 + n.radius * 5, dist);
+      // measure label width rarely (layout read), staggered across frames
+      let wc = widthCache.get(el);
+      if (!wc || frame.n - wc.at > 90) {
+        const title = el.querySelector<HTMLElement>('.lbl-title');
+        wc = { w: title ? title.offsetWidth : 120, at: frame.n + Math.floor(Math.random() * 30) };
+        widthCache.set(el, wc);
+      }
+      const detail = isHov || isSel ? 1 : 1 - smooth(85 + n.radius * 4, 155 + n.radius * 7, dist);
       cands.push({
         el,
         x: (v.x * 0.5 + 0.5) * width,
@@ -80,42 +81,13 @@ export function LabelsProjector() {
         dist,
         detail,
         hov: isHov,
-        prio:
-          (isHov ? 5000 : 0) +
-          (isSel ? 4000 : 0) +
-          (frame.neighbors.has(n.id) ? 600 : 0) +
-          vz.importance * 420 +
-          vz.vitality * 160 -
-          dist * 0.8 +
-          n.vis * 200,
-        w: wc ? wc.w : -1,
+        prio: (isHov ? 5000 : 0) + (isSel ? 4000 : 0) + (frame.neighbors.has(n.id) ? 600 : 0) + TYPE_PRIO[n.type] - dist * 0.8 + n.vis * 200,
+        w: wc.w,
       });
     }
 
     cands.sort((p, q) => q.prio - p.prio);
-    // 2. lectures groupées : largeur des seules étiquettes qui ont une chance d'être affichées
-    const budget = Math.min(cands.length, MAX_LABELS + MAX_GHOST_LABELS + 60);
-    for (let i = 0; i < budget; i++) {
-      const c = cands[i];
-      const wc = widthCache.get(c.el);
-      if (!wc || frame.n - wc.at > 90) {
-        const title = c.el.querySelector<HTMLElement>('.lbl-title');
-        const w = title ? title.offsetWidth : 120;
-        widthCache.set(c.el, { w, at: frame.n + Math.floor(Math.random() * 30) });
-        c.w = w;
-      }
-    }
-    // 3. écritures
-    for (const el of hide) if (el.style.visibility !== 'hidden') el.style.visibility = 'hidden';
-    for (let i = budget; i < cands.length; i++) {
-      const el = cands[i].el;
-      if (!cands[i].hov && el.style.visibility !== 'hidden') el.style.visibility = 'hidden';
-    }
-    cands.length = Math.max(budget, cands.findIndex((c) => c.hov) + 1);
     const placed: number[] = [];
-    // budget : au-delà, une étiquette ne dit plus rien (et coûte cher) — seules les plus importantes restent
-    let shown = 0;
-    let ghosts = 0;
     for (const c of cands) {
       const left = c.x + 16 * c.s;
       const top = c.y - 31 * c.s;
@@ -130,15 +102,7 @@ export function LabelsProjector() {
           }
         }
       }
-      if ((!clash && shown >= MAX_LABELS && !c.hov) || (clash && ghosts >= MAX_GHOST_LABELS)) {
-        if (c.el.style.visibility !== 'hidden') c.el.style.visibility = 'hidden';
-        continue;
-      }
-      if (clash) ghosts++;
-      else {
-        shown++;
-        placed.push(left, top, rgt, bottom);
-      }
+      if (!clash) placed.push(left, top, rgt, bottom);
       const el = c.el;
       if (el.style.visibility !== 'visible') el.style.visibility = 'visible';
       el.style.transform = `translate3d(${c.x.toFixed(1)}px,${c.y.toFixed(1)}px,0) scale(${c.s.toFixed(3)})`;
@@ -164,7 +128,7 @@ export function LabelsProjector() {
           rt.style.opacity = '0';
         } else {
           right.set(1, 0, 0).applyQuaternion(cam.quaternion);
-          r.copy(n.render).addScaledVector(right, n.glyph * 2.5).project(cam);
+          r.copy(n.render).addScaledVector(right, n.radius * 1.15).project(cam);
           const x = (v.x * 0.5 + 0.5) * width;
           const y = (-v.y * 0.5 + 0.5) * height;
           const px = Math.abs((r.x - v.x) * 0.5 * width);

@@ -1,675 +1,590 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { edgeKey, type Structure } from './structure';
-import { layout } from './layout';
-import { visuals } from './visual';
-import { makeLinkMaterial, makeNodeMaterial, makePulseMaterial } from './shaders';
-import { PulseSystem, pulseLevel } from './pulses';
+import type { Structure } from './structure';
+import { layout, CORE, RADIUS } from './layout';
+import { buildConstellation, densityFor, type CGeo } from './constellation';
+import { makeCoreMaterial, makeLineMaterial, makePointMaterial } from './shaders';
+import { PulseSystem } from './pulses';
 import { telemetry } from './telemetry';
 import { fx } from '../store/fx';
 import { useUI } from '../store/ui';
 import { useData } from '../store/data';
-import { suggestionsFor } from '../lib/similar';
-import { useSession } from '../sync/session';
-import { hashString, mulberry32 } from '../lib/random';
+import { mulberry32, hashString } from '../lib/random';
 
-const SEG = 22; // segments par connexion
-const MAX_GHOST = 4; // connexions possibles affichées en pointillés
-const MAX_FADES = 24; // neurones en train de disparaître
-const HUGE = new THREE.Sphere(new THREE.Vector3(), 1e6);
-/** vitesse d'une impulsion, en unités du monde par seconde (bornée pour les liens très courts ou très longs) */
-const PULSE_SPEED = 22;
-/** au-delà, les neurones ne répondent plus aux impulsions reçues (pas d'emballement) */
-const ECHO_CAP = 260;
-
-function attr(n: number, size: number) {
-  return new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n) * size), size).setUsage(THREE.DynamicDrawUsage);
-}
-
-function makeNodeGeo(cap: number) {
-  const g = new THREE.InstancedBufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 0]), 3));
-  g.setIndex([0, 1, 2, 0, 2, 3]);
-  g.setAttribute('iPos', attr(cap, 3));
-  g.setAttribute('iColor', attr(cap, 3));
-  g.setAttribute('iSize', attr(cap, 1));
-  g.setAttribute('iBranches', attr(cap, 1));
-  g.setAttribute('iState', attr(cap, 4));
-  g.setAttribute('iFx', attr(cap, 4));
-  g.setAttribute('iFire', attr(cap, 1));
-  g.setAttribute('iPhase', attr(cap, 1));
-  g.instanceCount = 0;
-  g.boundingSphere = HUGE;
-  return g;
-}
-
-const LINK_ATTRS: [string, number][] = [
-  ['iA', 3],
-  ['iC', 3],
-  ['iB', 3],
-  ['iColA', 3],
-  ['iColB', 3],
-  ['iP', 4],
-  ['iF', 4],
-  ['iTrim', 2],
-];
-const NODE_ATTRS = ['iPos', 'iColor', 'iSize', 'iBranches', 'iState', 'iFx', 'iFire'];
-
-function makeLinkGeo(cap: number) {
-  const g = new THREE.InstancedBufferGeometry();
-  const verts = (SEG + 1) * 2;
-  const t = new Float32Array(verts);
-  const side = new Float32Array(verts);
-  for (let i = 0; i <= SEG; i++) {
-    t[i * 2] = t[i * 2 + 1] = i / SEG;
-    side[i * 2] = -1;
-    side[i * 2 + 1] = 1;
-  }
-  const idx: number[] = [];
-  for (let i = 0; i < SEG; i++) {
-    const a = i * 2;
-    idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
-  }
-  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts * 3), 3));
-  g.setAttribute('aT', new THREE.BufferAttribute(t, 1));
-  g.setAttribute('aSide', new THREE.BufferAttribute(side, 1));
-  g.setIndex(idx);
-  for (const [name, size] of LINK_ATTRS) g.setAttribute(name, attr(cap, size));
-  g.instanceCount = 0;
-  g.boundingSphere = HUGE;
-  return g;
-}
+const SEG = 22; // segments per axon curve
+const STREAM_PER = 12; // flowing particles per connection
 
 interface Built {
   key: string;
   n: number;
   e: number;
-  nodeGeo: THREE.InstancedBufferGeometry;
-  linkGeo: THREE.InstancedBufferGeometry;
-  index: Map<string, number>;
-  edgeIndex: Map<string, number>;
-  incident: number[][];
-  seeds: Float32Array;
-  /** courbe de chaque lien : départ, point de contrôle, arrivée (9 nombres) — pour les impulsions */
+  geos: CGeo[];
+  offsets: Int32Array;
+  baseColor: THREE.Color[];
+  pos: Float32Array;
+  ints: Float32Array;
+  streamStart: number;
+  streamU: Float32Array;
+  streamSpeed: Float32Array;
+  streamOff: Float32Array;
+  pointsGeo: THREE.BufferGeometry;
+  webGeo: THREE.BufferGeometry;
+  bundleGeo: THREE.BufferGeometry;
+  haloGeo: THREE.BufferGeometry;
+  haloPos: Float32Array;
+  haloSize: Float32Array;
+  haloInt: Float32Array;
+  axonGeo: THREE.BufferGeometry;
+  axonPos: Float32Array;
+  axonCol: Float32Array;
   curves: Float32Array;
-  flowStart: Float32Array;
-  flowDir: Float32Array;
-  flowInt: Float32Array;
-  flowSpeed: Float32Array;
+  edgeSeed: Float32Array;
+  edgeKey: Map<string, number>;
+  incident: number[][];
 }
+
+const HUGE = new THREE.Sphere(new THREE.Vector3(), 1e6);
 
 function build(structure: Structure): Built {
   layout.sync(structure.nodes, structure.edges);
   const { nodes, edges } = structure;
-  const nodeGeo = makeNodeGeo(nodes.length + MAX_FADES);
-  const linkGeo = makeLinkGeo(edges.length + MAX_GHOST);
-  const index = new Map(nodes.map((x, i) => [x.id, i]));
-  const edgeIndex = new Map(edges.map((x, i) => [x.key, i]));
+  const density = densityFor(nodes.map((n) => n.type));
+  const geos = nodes.map((n) => buildConstellation(n.id, n.type, n.color, density, RADIUS[n.type]));
+  const baseColor = nodes.map((n) => new THREE.Color(n.color));
+
+  const offsets = new Int32Array(nodes.length);
+  let total = 0;
+  geos.forEach((g, i) => {
+    offsets[i] = total;
+    total += g.count;
+  });
+  const streamStart = total;
+  total += edges.length * STREAM_PER;
+
+  const pos = new Float32Array(total * 3);
+  const colors = new Float32Array(total * 3);
+  const sizes = new Float32Array(total);
+  const ints = new Float32Array(total);
+  const phases = new Float32Array(total);
+  geos.forEach((g, i) => {
+    const o = offsets[i];
+    colors.set(g.colors, o * 3);
+    sizes.set(g.sizes, o);
+    phases.set(g.phases, o);
+  });
+
+  // flowing particles along each connection
+  const streamU = new Float32Array(edges.length * STREAM_PER);
+  const streamSpeed = new Float32Array(edges.length * STREAM_PER);
+  const streamOff = new Float32Array(edges.length * STREAM_PER * 2);
+  const index = new Map(nodes.map((n, i) => [n.id, i]));
+  const tmp = new THREE.Color();
+  const white = new THREE.Color(1, 1, 1);
+  edges.forEach((e, ei) => {
+    const rng = mulberry32(hashString(e.key));
+    const ca = baseColor[index.get(e.a)!];
+    const cb = baseColor[index.get(e.b)!];
+    for (let s = 0; s < STREAM_PER; s++) {
+      const k = ei * STREAM_PER + s;
+      const p = streamStart + k;
+      streamU[k] = rng();
+      streamSpeed[k] = (0.025 + rng() * 0.05) * (rng() < 0.5 ? 1 : -1);
+      streamOff[k * 2] = (rng() - 0.5) * 2.4;
+      streamOff[k * 2 + 1] = (rng() - 0.5) * 2.4;
+      tmp.copy(rng() < 0.5 ? ca : cb).lerp(white, 0.25 + rng() * 0.3);
+      colors[p * 3] = tmp.r;
+      colors[p * 3 + 1] = tmp.g;
+      colors[p * 3 + 2] = tmp.b;
+      sizes[p] = 0.2 + rng() * 0.3;
+      phases[p] = rng();
+    }
+  });
+
+  const posAttr = new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage);
+  const colAttr = new THREE.BufferAttribute(colors, 3);
+  const intAttr = new THREE.BufferAttribute(ints, 1).setUsage(THREE.DynamicDrawUsage);
+  const pointsGeo = new THREE.BufferGeometry();
+  pointsGeo.setAttribute('position', posAttr);
+  pointsGeo.setAttribute('aColor', colAttr);
+  pointsGeo.setAttribute('aInt', intAttr);
+  pointsGeo.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+  pointsGeo.setAttribute('aPhase', new THREE.BufferAttribute(phases, 1));
+  pointsGeo.boundingSphere = HUGE;
+
+  // neural web inside constellations: indexes into the shared particle buffer
+  const web: number[] = [];
+  geos.forEach((g, i) => {
+    const o = offsets[i];
+    for (let k = 0; k < g.web.length; k++) web.push(g.web[k] + o);
+  });
+  const webGeo = new THREE.BufferGeometry();
+  webGeo.setAttribute('position', posAttr);
+  webGeo.setAttribute('aColor', colAttr);
+  webGeo.setAttribute('aInt', intAttr);
+  webGeo.setIndex(new THREE.BufferAttribute(new Uint32Array(web), 1));
+  webGeo.boundingSphere = HUGE;
+
+  // fibre bundles between connected constellations (particle → particle)
+  const bundle: number[] = [];
   const incident: number[][] = nodes.map(() => []);
-  edges.forEach((ed, i) => {
-    incident[index.get(ed.a)!].push(i);
-    incident[index.get(ed.b)!].push(i);
+  const edgeKey = new Map<string, number>();
+  edges.forEach((e, ei) => {
+    const ia = index.get(e.a)!;
+    const ib = index.get(e.b)!;
+    incident[ia].push(ei);
+    incident[ib].push(ei);
+    edgeKey.set(e.key, ei);
+    const rng = mulberry32(hashString(e.key) ^ 0xabcdef);
+    const K = e.kind === 'parent' ? 9 : 6;
+    for (let k = 0; k < K; k++) {
+      bundle.push(offsets[ia] + Math.floor(rng() * geos[ia].count), offsets[ib] + Math.floor(rng() * geos[ib].count));
+    }
   });
-  const ph = nodeGeo.getAttribute('iPhase').array as Float32Array;
-  nodes.forEach((x, i) => {
-    ph[i] = (hashString(x.id) % 1000) / 1000;
+  const bundleGeo = new THREE.BufferGeometry();
+  bundleGeo.setAttribute('position', posAttr);
+  bundleGeo.setAttribute('aColor', colAttr);
+  bundleGeo.setAttribute('aInt', intAttr);
+  bundleGeo.setIndex(new THREE.BufferAttribute(new Uint32Array(bundle), 1));
+  bundleGeo.boundingSphere = HUGE;
+
+  // soft halo around each nucleus
+  const haloPos = new Float32Array(nodes.length * 3);
+  const haloSize = new Float32Array(nodes.length);
+  const haloInt = new Float32Array(nodes.length);
+  const haloCol = new Float32Array(nodes.length * 3);
+  baseColor.forEach((c, i) => {
+    haloCol[i * 3] = c.r;
+    haloCol[i * 3 + 1] = c.g;
+    haloCol[i * 3 + 2] = c.b;
   });
-  const seeds = new Float32Array(edges.length * 3);
-  edges.forEach((ed, i) => {
-    const rng = mulberry32(hashString(ed.key) ^ 0x51ed);
+  const haloGeo = new THREE.BufferGeometry();
+  haloGeo.setAttribute('position', new THREE.BufferAttribute(haloPos, 3).setUsage(THREE.DynamicDrawUsage));
+  haloGeo.setAttribute('aColor', new THREE.BufferAttribute(haloCol, 3));
+  haloGeo.setAttribute('aSize', new THREE.BufferAttribute(haloSize, 1).setUsage(THREE.DynamicDrawUsage));
+  haloGeo.setAttribute('aInt', new THREE.BufferAttribute(haloInt, 1).setUsage(THREE.DynamicDrawUsage));
+  haloGeo.setAttribute('aPhase', new THREE.BufferAttribute(new Float32Array(nodes.length).fill(0.1), 1));
+  haloGeo.boundingSphere = HUGE;
+
+  // axons: curved lines between nuclei, carrying the impulses
+  const axonPos = new Float32Array(edges.length * SEG * 2 * 3);
+  const axonCol = new Float32Array(edges.length * SEG * 2 * 3);
+  const axonGeo = new THREE.BufferGeometry();
+  axonGeo.setAttribute('position', new THREE.BufferAttribute(axonPos, 3).setUsage(THREE.DynamicDrawUsage));
+  axonGeo.setAttribute('aColor', new THREE.BufferAttribute(axonCol, 3).setUsage(THREE.DynamicDrawUsage));
+  axonGeo.setAttribute('aInt', new THREE.BufferAttribute(new Float32Array(edges.length * SEG * 2).fill(1), 1));
+  axonGeo.boundingSphere = HUGE;
+
+  const edgeSeed = new Float32Array(edges.length * 3);
+  edges.forEach((e, ei) => {
+    const rng = mulberry32(hashString(e.key) ^ 0x51ed);
     const u = rng() * 2 - 1;
     const th = rng() * Math.PI * 2;
     const s = Math.sqrt(1 - u * u);
-    seeds[i * 3] = s * Math.cos(th);
-    seeds[i * 3 + 1] = u;
-    seeds[i * 3 + 2] = s * Math.sin(th);
+    edgeSeed[ei * 3] = s * Math.cos(th);
+    edgeSeed[ei * 3 + 1] = u;
+    edgeSeed[ei * 3 + 2] = s * Math.sin(th);
   });
-  const cap = edges.length + MAX_GHOST;
+
   return {
     key: structure.key,
     n: nodes.length,
     e: edges.length,
-    nodeGeo,
-    linkGeo,
-    index,
-    edgeIndex,
+    geos,
+    offsets,
+    baseColor,
+    pos,
+    ints,
+    streamStart,
+    streamU,
+    streamSpeed,
+    streamOff,
+    pointsGeo,
+    webGeo,
+    bundleGeo,
+    haloGeo,
+    haloPos,
+    haloSize,
+    haloInt,
+    axonGeo,
+    axonPos,
+    axonCol,
+    curves: new Float32Array(edges.length * 9),
+    edgeSeed,
+    edgeKey,
     incident,
-    seeds,
-    curves: new Float32Array(cap * 9),
-    flowStart: new Float32Array(cap).fill(-100),
-    flowDir: new Float32Array(cap).fill(1),
-    flowInt: new Float32Array(cap),
-    flowSpeed: new Float32Array(cap).fill(0.8),
   };
 }
 
 const ease3 = (x: number) => 1 - Math.pow(1 - x, 3);
 const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
-const reducedMotion = () => typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-interface Fade {
-  pos: THREE.Vector3;
-  color: THREE.Color;
-  size: number;
-  t: number;
-}
-
-interface Later {
-  at: number;
-  ei: number;
-  from: string;
-  intensity: number;
-}
 
 export function Galaxy({ structure }: { structure: Structure }) {
   const built = useMemo(() => build(structure), [structure]);
   const builtRef = useRef(built);
   builtRef.current = built;
-  const mats = useMemo(() => ({ node: makeNodeMaterial(), link: makeLinkMaterial(), pulse: makePulseMaterial() }), []);
+
+  const mats = useMemo(
+    () => ({
+      points: makePointMaterial(1.15, 90),
+      halo: makePointMaterial(1, 420),
+      pulses: makePointMaterial(1.1, 60),
+      web: makeLineMaterial(0.3),
+      bundle: makeLineMaterial(0.07),
+      axon: makeLineMaterial(1),
+      core: makeCoreMaterial(),
+    }),
+    [],
+  );
+  const coreGeo = useMemo(() => new THREE.SphereGeometry(1, 28, 20), []);
   const pulses = useMemo(() => new PulseSystem(), []);
-  if (import.meta.env.DEV) (window as unknown as { __galaxy: unknown }).__galaxy = { builtRef, mats, pulses };
-  const clock = useRef(0);
-  const fades = useRef<Fade[]>([]);
-  const later = useRef<Later[]>([]);
-  const pending = useRef<{ a: string; b: string; until: number; intensity: number }[]>([]);
-  const act = useRef({ sel: null as string | null, next: 0, hov: null as string | null, ghosts: [] as string[], ghostFor: null as string | null, ghostAt: -100 });
-  const hood = useRef({ id: null as string | null, key: '', n1: new Set<string>(), n2: new Set<string>() });
-  const timers = useRef({ ambient: 0, hover: 0, stats: 0, waves: 0, boot: 60, level: pulseLevel() as string });
-  const tmp = useMemo(() => ({ ab: new THREE.Vector3(), seed: new THREE.Vector3(), perp: new THREE.Vector3() }), []);
+  const coresRef = useRef<THREE.InstancedMesh>(null);
+  const linkQueue = useRef<{ a: string; b: string; until: number }[]>([]);
+  const timers = useRef({ idle: 0, hover: 0, stats: 0, spawnedAt: 0 });
 
   useEffect(() => {
-    // le réseau a changé : les impulsions en vol suivaient les anciens liens
     pulses.dropEdgePulses();
-    later.current = [];
     return () => {
-      built.nodeGeo.dispose();
-      built.linkGeo.dispose();
+      built.pointsGeo.dispose();
+      built.webGeo.dispose();
+      built.bundleGeo.dispose();
+      built.haloGeo.dispose();
+      built.axonGeo.dispose();
     };
   }, [built, pulses]);
-  useEffect(() => () => pulses.geo.dispose(), [pulses]);
 
-  /** Une impulsion part d'un neurone et parcourt une connexion (l'axone s'allume autour d'elle) */
-  const fire = useMemo(
-    () => (ei: number, from: string, intensity: number, delay = 0) => {
+  // visual effects triggered by data changes
+  useEffect(() => {
+    const emitFrom = (nodeIdx: number, strength: number, onlyTo?: Set<string>) => {
       const b = builtRef.current;
-      const ed = layout.edges[ei];
-      if (!ed || ei >= b.e) return;
-      if (delay > 0) {
-        later.current.push({ at: clock.current + delay, ei, from, intensity });
-        return;
+      const node = layout.list[nodeIdx];
+      if (!node) return;
+      for (const ei of b.incident[nodeIdx] ?? []) {
+        const edge = layout.edges[ei];
+        if (!edge) continue;
+        const fromA = edge.a === node.id;
+        const otherId = fromA ? edge.b : edge.a;
+        if (onlyTo && !onlyTo.has(otherId)) continue;
+        const target = layout.list.findIndex((x) => x.id === otherId);
+        pulses.pulse(ei, fromA, strength, b.baseColor[nodeIdx], target);
       }
-      const fromA = ed.a === from;
-      const c = ei * 9;
-      const len = Math.hypot(b.curves[c + 6] - b.curves[c], b.curves[c + 7] - b.curves[c + 1], b.curves[c + 8] - b.curves[c + 2]) || 30;
-      const speed = Math.max(0.28, Math.min(0.9, PULSE_SPEED / len));
-      // l'axone s'allume (une onde à la fois par lien : la plus forte l'emporte)
-      const age = clock.current - b.flowStart[ei];
-      if (!(age > -0.1 && age * b.flowSpeed[ei] < 0.8 && b.flowInt[ei] > intensity)) {
-        b.flowStart[ei] = clock.current;
-        b.flowDir[ei] = fromA ? 1 : -1;
-        b.flowInt[ei] = intensity;
-        b.flowSpeed[ei] = speed;
-      }
-      timers.current.waves++;
-      if (pulseLevel() === 'off') return;
-      const src = b.index.get(from);
-      const dst = b.index.get(fromA ? ed.b : ed.a);
-      if (src === undefined) return;
-      const sv = visuals.get(from);
-      pulses.pulse(ei, fromA, intensity * (sv.done ? 0.5 : 1), sv.color, dst ?? -1, speed);
-    },
-    [pulses],
-  );
-  // activation qui se propage : voisins directs, puis voisins des voisins
-  const fireAround = useMemo(
-    () => (id: string, intensity: number, deep = false) => {
+    };
+    const idxOf = (id: string) => layout.list.findIndex((n) => n.id === id);
+    return fx.on((e) => {
       const b = builtRef.current;
-      const i = b.index.get(id);
-      if (i === undefined) return;
-      for (const ei of b.incident[i] ?? []) {
-        fire(ei, id, intensity, Math.random() * 0.12);
-        if (!deep) continue;
-        const ed = layout.edges[ei];
-        const other = ed.a === id ? ed.b : ed.a;
-        const j = b.index.get(other);
-        if (j === undefined) continue;
-        for (const ej of b.incident[j]) if (ej !== ei) fire(ej, other, intensity * 0.55, 0.9 + Math.random() * 0.4);
-      }
-    },
-    [fire],
-  );
-
-  useEffect(
-    () =>
-      fx.on((ev) => {
-        const lvl = pulseLevel();
-        if (ev.kind === 'celebrate') {
-          const node = layout.nodes.get(ev.id);
-          if (node) {
-            node.ripple = 0.001;
-            node.flash = Math.max(node.flash, 1.2);
-            if (lvl !== 'off') pulses.burst(node.render, visuals.get(ev.id).color, lvl === 'vif' ? 70 : 30, 16, 1.6);
-          }
-          fireAround(ev.id, 1.2, true);
-        } else if (ev.kind === 'touch') {
-          const node = layout.nodes.get(ev.id);
-          if (node) node.flash = Math.max(node.flash, 0.3);
-          fireAround(ev.id, 0.5);
-        } else if (ev.kind === 'link') {
-          pending.current.push({ a: ev.a, b: ev.b, until: performance.now() + 2500, intensity: 1.1 });
-        } else if (ev.kind === 'strengthen') {
-          pending.current.push({ a: ev.a, b: ev.b, until: performance.now() + 1500, intensity: 0.9 });
-        } else if (ev.kind === 'death') {
-          const node = layout.nodes.get(ev.id);
-          if (node) {
-            fades.current.push({ pos: node.render.clone(), color: visuals.get(ev.id).color, size: node.size || 1, t: 0 });
-            if (fades.current.length > MAX_FADES) fades.current.shift();
-          }
+      if (e.kind === 'celebrate') {
+        const i = idxOf(e.id);
+        if (i < 0) return;
+        const node = layout.list[i];
+        node.flash = 2.4;
+        pulses.burst(node.render, b.baseColor[i], 70, 16, 1.6);
+        emitFrom(i, 2.2);
+        // second wave toward the parent project
+        const ent = useData.getState().entities[e.id];
+        if (ent?.type === 'task' && ent.projectId) {
+          const pid = ent.projectId;
+          setTimeout(() => {
+            const j = idxOf(e.id);
+            if (j >= 0) emitFrom(j, 2.4, new Set([pid]));
+          }, 350);
         }
-      }),
-    [fireAround, pulses],
-  );
+      } else if (e.kind === 'touch') {
+        const i = idxOf(e.id);
+        if (i >= 0) {
+          emitFrom(i, 0.9);
+          layout.list[i].flash = Math.max(layout.list[i].flash, 0.35);
+        }
+      } else if (e.kind === 'link') {
+        linkQueue.current.push({ a: e.a, b: e.b, until: performance.now() + 2000 });
+      } else if (e.kind === 'death') {
+        const i = idxOf(e.id);
+        if (i < 0) return;
+        pulses.burst(layout.list[i].render, b.baseColor[i], 90, 22, 1.8);
+      }
+    });
+  }, [pulses]);
+
+  const q = useMemo(() => new THREE.Quaternion(), []);
+  const m = useMemo(() => new THREE.Matrix4(), []);
+  const tmpM = useMemo(() => new THREE.Matrix4(), []);
+  const tmpV = useMemo(() => new THREE.Vector3(), []);
+  const tmpS = useMemo(() => new THREE.Vector3(), []);
+  const tmpQ = useMemo(() => new THREE.Quaternion(), []);
+  const tmpC = useMemo(() => new THREE.Color(), []);
+  const perp = useMemo(() => new THREE.Vector3(), []);
+  const bin = useMemo(() => new THREE.Vector3(), []);
+  const ab = useMemo(() => new THREE.Vector3(), []);
+  const neighborCache = useRef<{ id: string | null; key: string; set: Set<string> }>({ id: null, key: '', set: new Set() });
 
   useFrame((state, rawDt) => {
     const b = builtRef.current;
     const dt = Math.min(rawDt, 0.05);
     const t = state.clock.elapsedTime;
-    clock.current = t;
     const L = layout.list;
-    if (L.length !== b.n) return; // structure en cours de changement
-    visuals.refresh();
-    const level = pulseLevel();
-    if (level !== timers.current.level) {
-      timers.current.level = level;
-      if (level === 'off') pulses.clearAll();
-    }
+    if (L.length !== b.n) return; // structure in flux
 
+    // shader uniforms
     const cam = state.camera as THREE.PerspectiveCamera;
-    const dpr = state.gl.getPixelRatio();
-    const scale = (state.size.height * dpr) / (2 * Math.tan((cam.fov * Math.PI) / 360));
-    mats.node.uniforms.uTime.value = t;
-    mats.node.uniforms.uScale.value = scale;
-    mats.node.uniforms.uMotion.value = reducedMotion() ? 0.3 : level === 'calme' ? 0.6 : 1;
-    mats.pulse.uniforms.uScale.value = scale;
-    mats.link.uniforms.uTime.value = t;
-    mats.link.uniforms.uRes.value.set(state.size.width, state.size.height);
-    mats.link.uniforms.uGain.value = Math.max(0.3, Math.min(1, 1.25 / Math.sqrt(Math.max(1, b.e / 120))));
+    const scale = (state.size.height * state.gl.getPixelRatio()) / (2 * Math.tan((cam.fov * Math.PI) / 360));
+    for (const mat of [mats.points, mats.halo, mats.pulses]) {
+      mat.uniforms.uTime.value = t;
+      mat.uniforms.uScale.value = scale;
+    }
 
     const ui = useUI.getState();
-    const data = useData.getState();
-    const ents = data.entities;
+    const ents = useData.getState().entities;
     const selId = ui.editorId ?? ui.selectedId;
-    const hovId = ui.hoveredId;
-
-    // voisinage de la sélection : 1er et 2e degrés
-    const hd = hood.current;
-    if (hd.id !== selId || hd.key !== b.key) {
-      hd.id = selId;
-      hd.key = b.key;
-      hd.n1 = new Set();
-      hd.n2 = new Set();
-      const si = selId ? b.index.get(selId) : undefined;
-      if (selId && si !== undefined) {
-        for (const ei of b.incident[si]) {
-          const ed = layout.edges[ei];
-          hd.n1.add(ed.a === selId ? ed.b : ed.a);
-        }
-        for (const o of hd.n1) {
-          const oi = b.index.get(o);
-          if (oi === undefined) continue;
-          for (const ei of b.incident[oi]) {
-            const ed = layout.edges[ei];
-            const x = ed.a === o ? ed.b : ed.a;
-            if (x !== selId && !hd.n1.has(x)) hd.n2.add(x);
-          }
-        }
-      }
+    const nc = neighborCache.current;
+    if (nc.id !== selId || nc.key !== b.key) {
+      nc.id = selId;
+      nc.key = b.key;
+      nc.set = selId ? layout.neighbors(selId) : new Set();
     }
-
-    // activation à la sélection, puis une respiration toutes les 4 s tant que la pensée est ouverte
-    const ac = act.current;
-    if (selId !== ac.sel) {
-      ac.sel = selId;
-      ac.next = t + 4;
-      if (selId) fireAround(selId, 1.0, true);
-    } else if (selId && t > ac.next) {
-      ac.next = t + (level === 'vif' ? 4 : 7);
-      fireAround(selId, 0.55);
-    }
-    if (hovId !== ac.hov) {
-      ac.hov = hovId;
-      if (hovId && hovId !== selId) fireAround(hovId, 0.6);
-    }
-    // connexions possibles (pointillés) autour de la sélection
-    if (selId !== ac.ghostFor || t - ac.ghostAt > 5) {
-      ac.ghostFor = selId;
-      ac.ghostAt = t;
-      ac.ghosts = selId ? suggestionsFor(ents, data.links, selId, 3, 0.2).map((s) => s.e.id) : [];
-    }
-
     const tagsOn = ui.activeTags.length > 0;
-    const hits = ui.searchHits;
-    // aperçu « voir comme » : seulement ce que cet invité a le droit de voir
-    const sess = useSession.getState();
-    const pm = sess.previewAs ? sess.members[sess.previewAs] : null;
-    const pScope = pm?.scope && pm.scope.all === false ? pm.scope.tags : null;
-    const k2 = 1 - Math.exp(-dt * 2.2);
-    const k3 = 1 - Math.exp(-dt * 3);
     const k5 = 1 - Math.exp(-dt * 5);
     const k9 = 1 - Math.exp(-dt * 9);
+    const k2 = 1 - Math.exp(-dt * 2);
 
-    const na = b.nodeGeo.attributes;
-    const P = na.iPos.array as Float32Array;
-    const C = na.iColor.array as Float32Array;
-    const S = na.iSize.array as Float32Array;
-    const BR = na.iBranches.array as Float32Array;
-    const ST = na.iState.array as Float32Array;
-    const FX = na.iFx.array as Float32Array;
-    const FI = na.iFire.array as Float32Array;
+    const { pos, ints } = b;
+    const me = m.elements;
+    const cores = coresRef.current;
 
     for (let i = 0; i < L.length; i++) {
       const node = L[i];
-      const v = visuals.get(node.id);
       const ent = ents[node.id];
       let vis = 1;
-      if (ui.hiddenNatures.includes(v.nature)) vis = 0;
-      else if (pm && (!ent || ent.private || (pScope && !ent.tags.some((t) => pScope.includes(t))))) vis = 0;
+      if (ui.hiddenTypes.includes(node.type)) vis = 0;
       else {
-        if (tagsOn && !(ent && ent.tags.some((tg) => ui.activeTags.includes(tg)))) vis = 0.1;
-        if (ui.orphansOnly && v.degree > 0) vis = Math.min(vis, 0.1);
-        if (hits && !hits.has(node.id)) vis = Math.min(vis, 0.12);
-        if (selId && selId !== node.id) vis = Math.min(vis, hd.n1.has(node.id) ? 1 : hd.n2.has(node.id) ? 0.5 : 0.18);
+        if (tagsOn) {
+          const ok = ent?.type === 'note' && ent.tags.some((tg) => ui.activeTags.includes(tg));
+          if (!ok) vis = 0.09;
+        }
+        if (selId && selId !== node.id && !nc.set.has(node.id)) vis = Math.min(vis, 0.36);
       }
       node.vis += (vis - node.vis) * k5;
-      node.hover += ((hovId === node.id ? 1 : 0) - node.hover) * k9;
+      node.hover += ((ui.hoveredId === node.id ? 1 : 0) - node.hover) * k9;
       node.sel += ((selId === node.id ? 1 : 0) - node.sel) * k5;
-      node.done += (v.done - node.done) * k2;
-      node.hub += (v.hub - node.hub) * k3;
-      node.alert += (v.alert - node.alert) * k3;
+      const isDone = !!ent && ((ent.type === 'task' && ent.status === 'done') || (ent.type === 'project' && ent.status === 'done'));
+      node.done += ((isDone ? 1 : 0) - node.done) * k2;
       node.flash *= Math.exp(-dt * 2.3);
       if (node.birth < 1) node.birth = Math.min(1, node.birth + dt * node.birthSpeed);
       if (node.birth >= 1 && !node.bornFlashed) {
         node.bornFlashed = true;
-        // au réveil d'un grand réseau, seule une partie des neurones s'annonce : un frémissement, pas une tempête
-        if (timers.current.boot > 0 || v.vitality > 0.6) {
-          const booting = timers.current.boot > 0;
-          timers.current.boot--;
-          node.ripple = 0.001;
-          node.flash = Math.max(node.flash, 0.8);
-          fireAround(node.id, 0.9);
-          // une pensée qui vient d'être capturée naît dans un éclat d'étincelles
-          if (!booting && level !== 'off') pulses.burst(node.render, v.color, level === 'vif' ? 26 : 12, 9, 1.1);
+        node.flash = Math.max(node.flash, 1.1);
+        pulses.burst(node.render, b.baseColor[i], 26, 9, 1.1);
+        for (const ei of b.incident[i]) {
+          const edge = layout.edges[ei];
+          const fromA = edge.a === node.id;
+          const other = fromA ? edge.b : edge.a;
+          pulses.pulse(ei, fromA, 1.2, b.baseColor[i], L.findIndex((x) => x.id === other));
         }
       }
-      if (node.ripple > 0) {
-        node.ripple += dt / 1.6;
-        if (node.ripple >= 1) node.ripple = 0;
+
+      const g = b.geos[i];
+      q.setFromAxisAngle(g.axis, t * g.spin);
+      m.makeRotationFromQuaternion(q);
+      const cx = node.render.x;
+      const cy = node.render.y;
+      const cz = node.render.z;
+      const birth = node.birth;
+      const forming = birth < 1;
+      const inten = node.vis * (1 + node.hover * 0.7 + node.sel * 0.4 + node.flash * 1.4) * (1 - node.done * 0.42);
+      const scl = 1 + node.hover * 0.07 + node.flash * 0.2;
+      const o = b.offsets[i];
+      const { local, scatter, delays } = g;
+      for (let p = 0; p < g.count; p++) {
+        const lx = local[p * 3];
+        const ly = local[p * 3 + 1];
+        const lz = local[p * 3 + 2];
+        let x = (me[0] * lx + me[4] * ly + me[8] * lz) * scl;
+        let y = (me[1] * lx + me[5] * ly + me[9] * lz) * scl;
+        let z = (me[2] * lx + me[6] * ly + me[10] * lz) * scl;
+        let a = 1;
+        if (forming) {
+          const e = ease3(clamp01((birth - delays[p]) / 0.6));
+          const sx = scatter[p * 3];
+          const sy = scatter[p * 3 + 1];
+          const sz = scatter[p * 3 + 2];
+          x = sx + (x - sx) * e;
+          y = sy + (y - sy) * e;
+          z = sz + (z - sz) * e;
+          a = e * e;
+        }
+        const k = (o + p) * 3;
+        pos[k] = cx + x;
+        pos[k + 1] = cy + y;
+        pos[k + 2] = cz + z;
+        ints[o + p] = inten * a;
       }
-      const be = ease3(clamp01(node.birth));
-      const breathe = v.active ? 1 + 0.12 * Math.sin(t * 2.1 + i) : 1;
-      node.bright += ((0.3 + 0.7 * v.vitality) * breathe - node.bright) * k3;
-      node.size += (v.glyph - node.size) * k3;
-      const bright = node.bright * node.vis * be * (1 + node.hover * 0.45 + node.sel * 0.3 + node.flash * 0.55);
-      const size = node.size * (0.35 + 0.65 * be) * (1 + node.hover * 0.12 + node.flash * 0.1);
 
-      P[i * 3] = node.render.x;
-      P[i * 3 + 1] = node.render.y;
-      P[i * 3 + 2] = node.render.z;
-      C[i * 3] = v.color.r;
-      C[i * 3 + 1] = v.color.g;
-      C[i * 3 + 2] = v.color.b;
-      S[i] = size;
-      BR[i] = v.branches;
-      ST[i * 4] = bright;
-      ST[i * 4 + 1] = node.done;
-      ST[i * 4 + 2] = node.hub;
-      ST[i * 4 + 3] = node.alert * Math.min(1, node.vis * 2);
-      FX[i * 4] = node.sel;
-      FX[i * 4 + 1] = node.hover * (1 - node.sel);
-      FX[i * 4 + 2] = node.ripple;
-      FX[i * 4 + 3] = v.active * Math.min(1, node.vis * 2);
-      FI[i] = node.flash * Math.min(1, node.vis * 2);
+      const be = ease3(clamp01(birth));
+      b.haloPos[i * 3] = cx;
+      b.haloPos[i * 3 + 1] = cy;
+      b.haloPos[i * 3 + 2] = cz;
+      b.haloSize[i] = node.radius * (1.9 + node.hover * 0.9 + node.sel * 0.4 + node.flash * 2.4) * be;
+      b.haloInt[i] = (0.13 + node.hover * 0.12 + node.sel * 0.1 + node.flash * 0.55) * node.vis * be * (1 - node.done * 0.4);
+
+      if (cores) {
+        const r = CORE[node.type] * (1 + node.hover * 0.3 + node.sel * 0.15 + node.flash * 0.45) * be * (node.vis < 0.02 ? 0 : 1);
+        tmpS.set(r, r, r);
+        tmpM.compose(node.render, tmpQ.identity(), tmpS);
+        cores.setMatrixAt(i, tmpM);
+        const gain = (1.5 + node.hover * 1.6 + node.sel * 0.9 + node.flash * 3.2) * (0.18 + 0.82 * node.vis) * (1 - node.done * 0.3);
+        tmpC.copy(b.baseColor[i]).multiplyScalar(gain);
+        cores.setColorAt(i, tmpC);
+      }
+    }
+    if (cores) {
+      cores.count = L.length;
+      cores.instanceMatrix.needsUpdate = true;
+      if (cores.instanceColor) cores.instanceColor.needsUpdate = true;
     }
 
-    // neurones qui disparaissent : une dernière onde, puis plus rien
-    let count = L.length;
-    fades.current = fades.current.filter((f) => (f.t += dt / 1.4) < 1);
-    for (const f of fades.current) {
-      if (count >= b.n + MAX_FADES) break;
-      const i = count++;
-      P[i * 3] = f.pos.x;
-      P[i * 3 + 1] = f.pos.y;
-      P[i * 3 + 2] = f.pos.z;
-      C[i * 3] = f.color.r;
-      C[i * 3 + 1] = f.color.g;
-      C[i * 3 + 2] = f.color.b;
-      S[i] = f.size;
-      BR[i] = -1;
-      ST[i * 4] = 1 - f.t;
-      ST[i * 4 + 1] = 0;
-      ST[i * 4 + 2] = 0;
-      ST[i * 4 + 3] = 0;
-      FX[i * 4] = 0;
-      FX[i * 4 + 1] = 0;
-      FX[i * 4 + 2] = Math.max(0.001, f.t);
-      FX[i * 4 + 3] = 0;
-      FI[i] = 0;
-    }
-    b.nodeGeo.instanceCount = count;
-    for (const k of NODE_ATTRS) na[k].needsUpdate = true;
-    if (b.n) na.iPhase.needsUpdate = true;
-
-    // ── connexions
-    const la = b.linkGeo.attributes;
-    const A3 = la.iA.array as Float32Array;
-    const C3 = la.iC.array as Float32Array;
-    const B3 = la.iB.array as Float32Array;
-    const CA = la.iColA.array as Float32Array;
-    const CB = la.iColB.array as Float32Array;
-    const PP = la.iP.array as Float32Array;
-    const FF = la.iF.array as Float32Array;
-    const TR = la.iTrim.array as Float32Array;
-    const CU = b.curves;
-    const { ab, seed, perp } = tmp;
-    const writeCurve = (k: number, A: (typeof L)[number], B: (typeof L)[number], sx: number, sy: number, sz: number) => {
-      ab.subVectors(B.render, A.render);
-      const dist = ab.length() || 1;
-      seed.set(sx, sy, sz);
-      perp.crossVectors(ab, seed);
-      if (perp.lengthSq() < 1e-8) perp.set(0, 1, 0);
-      perp.normalize();
-      const bend = dist * 0.12;
-      const cx = (A.render.x + B.render.x) * 0.5 + perp.x * bend;
-      const cy = (A.render.y + B.render.y) * 0.5 + perp.y * bend;
-      const cz = (A.render.z + B.render.z) * 0.5 + perp.z * bend;
-      A3[k * 3] = A.render.x;
-      A3[k * 3 + 1] = A.render.y;
-      A3[k * 3 + 2] = A.render.z;
-      B3[k * 3] = B.render.x;
-      B3[k * 3 + 1] = B.render.y;
-      B3[k * 3 + 2] = B.render.z;
-      C3[k * 3] = cx;
-      C3[k * 3 + 1] = cy;
-      C3[k * 3 + 2] = cz;
-      CU[k * 9] = A.render.x;
-      CU[k * 9 + 1] = A.render.y;
-      CU[k * 9 + 2] = A.render.z;
-      CU[k * 9 + 3] = cx;
-      CU[k * 9 + 4] = cy;
-      CU[k * 9 + 5] = cz;
-      CU[k * 9 + 6] = B.render.x;
-      CU[k * 9 + 7] = B.render.y;
-      CU[k * 9 + 8] = B.render.z;
-      TR[k * 2] = Math.min(0.45, (A.size * 1.35) / dist);
-      TR[k * 2 + 1] = Math.max(0.55, 1 - (B.size * 1.35) / dist);
-      const ca = visuals.get(A.id).color;
-      const cb = visuals.get(B.id).color;
-      CA[k * 3] = ca.r;
-      CA[k * 3 + 1] = ca.g;
-      CA[k * 3 + 2] = ca.b;
-      CB[k * 3] = cb.r;
-      CB[k * 3 + 1] = cb.g;
-      CB[k * 3 + 2] = cb.b;
-    };
-
+    // connections: curves, axon lines, streams
     const E = layout.edges.length === b.e ? b.e : 0;
+    const { curves, edgeSeed, axonPos, axonCol, streamU, streamSpeed, streamOff } = b;
     for (let ei = 0; ei < E; ei++) {
       const ia = layout.edgeIdx[ei * 2];
       const ib = layout.edgeIdx[ei * 2 + 1];
       if (ia < 0 || ib < 0) continue;
       const A = L[ia];
       const B = L[ib];
-      const ed = layout.edges[ei];
-      writeCurve(ei, A, B, b.seeds[ei * 3], b.seeds[ei * 3 + 1], b.seeds[ei * 3 + 2]);
-      const ev = visuals.edges.get(ed.key);
-      let eb = Math.min(A.vis, B.vis) * Math.min(ease3(clamp01(A.birth)), ease3(clamp01(B.birth)));
-      if (selId && (ed.a === selId || ed.b === selId)) eb *= 1.45;
-      else if (hovId && (ed.a === hovId || ed.b === hovId)) eb *= 1.3;
-      eb *= 1 - 0.45 * Math.max(A.done, B.done);
-      PP[ei * 4] = ev?.strength ?? 0.5;
-      PP[ei * 4 + 1] = eb;
-      PP[ei * 4 + 2] = ev?.fresh ?? 0;
-      PP[ei * 4 + 3] = 0;
-      FF[ei * 4] = b.flowStart[ei];
-      FF[ei * 4 + 1] = b.flowDir[ei];
-      // une impulsion sur un lien à peine visible ne l'allume pas
-      FF[ei * 4 + 2] = b.flowInt[ei] * Math.min(1, eb * 1.6);
-      FF[ei * 4 + 3] = b.flowSpeed[ei];
-    }
-    let lc = E;
-    const si = selId ? b.index.get(selId) : undefined;
-    if (si !== undefined && ac.ghostFor === selId) {
-      for (const gid of ac.ghosts) {
-        const gi = b.index.get(gid);
-        if (gi === undefined || lc >= b.e + MAX_GHOST) continue;
-        const A = L[si];
-        const B = L[gi];
-        writeCurve(lc, A, B, 0.3, 0.9, 0.2);
-        PP[lc * 4] = 0.35;
-        PP[lc * 4 + 1] = Math.min(A.vis, Math.max(B.vis, 0.5)) * 0.95;
-        PP[lc * 4 + 2] = 0;
-        PP[lc * 4 + 3] = 1;
-        FF[lc * 4 + 2] = 0;
-        lc++;
+      const parent = layout.edges[ei].kind === 'parent';
+      ab.subVectors(B.render, A.render);
+      const dist = ab.length() || 1;
+      tmpV.set(edgeSeed[ei * 3], edgeSeed[ei * 3 + 1], edgeSeed[ei * 3 + 2]);
+      perp.crossVectors(ab, tmpV).normalize();
+      bin.crossVectors(ab, perp).normalize();
+      const bend = dist * (parent ? 0.1 : 0.18);
+      const c = ei * 9;
+      curves[c] = A.render.x;
+      curves[c + 1] = A.render.y;
+      curves[c + 2] = A.render.z;
+      curves[c + 3] = (A.render.x + B.render.x) * 0.5 + perp.x * bend;
+      curves[c + 4] = (A.render.y + B.render.y) * 0.5 + perp.y * bend;
+      curves[c + 5] = (A.render.z + B.render.z) * 0.5 + perp.z * bend;
+      curves[c + 6] = B.render.x;
+      curves[c + 7] = B.render.y;
+      curves[c + 8] = B.render.z;
+      const hl = Math.max(A.hover, B.hover, A.sel, B.sel);
+      const eb = Math.min(ease3(clamp01(A.birth)), ease3(clamp01(B.birth)));
+      const ei2 = Math.min(A.vis, B.vis) * eb * (0.55 + hl * 1.1 + Math.max(A.flash, B.flash) * 0.4);
+      const ca = b.baseColor[ia];
+      const cb = b.baseColor[ib];
+      const gain = ei2 * (parent ? 0.34 : 0.26);
+      for (let s = 0; s < SEG; s++) {
+        for (let h = 0; h < 2; h++) {
+          const u = (s + h) / SEG;
+          const iu = 1 - u;
+          const v = (ei * SEG * 2 + s * 2 + h) * 3;
+          axonPos[v] = iu * iu * curves[c] + 2 * iu * u * curves[c + 3] + u * u * curves[c + 6];
+          axonPos[v + 1] = iu * iu * curves[c + 1] + 2 * iu * u * curves[c + 4] + u * u * curves[c + 7];
+          axonPos[v + 2] = iu * iu * curves[c + 2] + 2 * iu * u * curves[c + 5] + u * u * curves[c + 8];
+          // brighter towards the ends, a faint gap mid-way like a real fibre
+          const shape = 0.55 + 0.45 * Math.cos(u * Math.PI * 2) * 0.5 + 0.22;
+          axonCol[v] = (ca.r * iu + cb.r * u) * gain * shape;
+          axonCol[v + 1] = (ca.g * iu + cb.g * u) * gain * shape;
+          axonCol[v + 2] = (ca.b * iu + cb.b * u) * gain * shape;
+        }
+      }
+      for (let s = 0; s < STREAM_PER; s++) {
+        const k = ei * STREAM_PER + s;
+        let u = (streamU[k] + t * streamSpeed[k]) % 1;
+        if (u < 0) u += 1;
+        const iu = 1 - u;
+        const bulge = Math.sin(u * Math.PI);
+        const oa = streamOff[k * 2] * bulge;
+        const ob = streamOff[k * 2 + 1] * bulge;
+        const p = (b.streamStart + k) * 3;
+        pos[p] = iu * iu * curves[c] + 2 * iu * u * curves[c + 3] + u * u * curves[c + 6] + perp.x * oa + bin.x * ob;
+        pos[p + 1] = iu * iu * curves[c + 1] + 2 * iu * u * curves[c + 4] + u * u * curves[c + 7] + perp.y * oa + bin.y * ob;
+        pos[p + 2] = iu * iu * curves[c + 2] + 2 * iu * u * curves[c + 5] + u * u * curves[c + 8] + perp.z * oa + bin.z * ob;
+        ints[b.streamStart + k] = ei2 * 0.6 * bulge;
       }
     }
-    b.linkGeo.instanceCount = lc;
-    for (const [k] of LINK_ATTRS) la[k].needsUpdate = true;
 
-    // ondes en attente (le lien apparaît une image après le changement de données)
-    if (pending.current.length) {
-      const nowMs = performance.now();
-      pending.current = pending.current.filter((p) => {
-        const ei = b.edgeIndex.get(edgeKey(p.a, p.b));
-        if (ei === undefined || ei >= E) return nowMs < p.until;
-        fire(ei, p.a, p.intensity);
-        // et la réponse de l'autre neurone, un instant plus tard : ils s'échangent une première impulsion
-        fire(ei, p.b, p.intensity * 0.8, 0.5);
-        const n = layout.nodes.get(p.a);
-        if (n) {
-          n.flash = Math.max(n.flash, 0.5);
-          if (level === 'vif') pulses.burst(n.render, visuals.get(p.a).color, 14, 7, 0.9);
-        }
+    // pending link pulses (edge appears one render after the data change)
+    if (linkQueue.current.length) {
+      const now = performance.now();
+      linkQueue.current = linkQueue.current.filter((lq) => {
+        const key = lq.a < lq.b ? `${lq.a}|${lq.b}` : `${lq.b}|${lq.a}`;
+        const ei = b.edgeKey.get(key);
+        if (ei === undefined || ei >= E) return now < lq.until;
+        const ia = layout.edgeIdx[ei * 2];
+        const ib = layout.edgeIdx[ei * 2 + 1];
+        const fromA = layout.edges[ei].a === lq.a;
+        const srcIdx = fromA ? ia : ib;
+        const dstIdx = fromA ? ib : ia;
+        pulses.pulse(ei, fromA, 1.6, b.baseColor[srcIdx], dstIdx);
+        pulses.pulse(ei, !fromA, 1.1, b.baseColor[dstIdx], srcIdx);
+        L[srcIdx].flash = Math.max(L[srcIdx].flash, 0.6);
         return false;
       });
     }
-    // impulsions programmées (propagation vers les voisins des voisins, réponses)
-    if (later.current.length) {
-      const due = later.current.filter((x) => x.at <= t);
-      if (due.length) {
-        later.current = later.current.filter((x) => x.at > t);
-        for (const x of due) fire(x.ei, x.from, x.intensity);
-      }
-      if (later.current.length > 400) later.current.splice(0, later.current.length - 400);
-    }
 
-    // ── impulsions : déplacement, arrivées
-    pulses.update(dt, b.curves, E);
-    const arrivals = pulses.arrivals;
-    if (arrivals.length) {
-      const inFlight = pulses.active;
-      for (const a of arrivals) {
-        const node = a.target >= 0 ? L[a.target] : undefined;
-        if (!node) continue;
-        // le neurone touché s'illumine…
-        node.flash = Math.min(2.2, node.flash + 0.35 * a.strength);
-        if (level !== 'vif' || inFlight > ECHO_CAP || a.strength < 0.3 || node.vis < 0.3) continue;
-        const ed = layout.edges[a.edge];
-        if (!ed) continue;
-        const r = Math.random();
-        if (r < 0.32) {
-          // …et parfois il répond : les deux neurones s'échangent l'impulsion
-          fire(a.edge, node.id, a.strength * 0.62, 0.12 + Math.random() * 0.35);
-        } else if (r < 0.52) {
-          // …ou il la transmet plus loin, à un de ses autres voisins
-          const inc = b.incident[a.target];
-          if (inc && inc.length > 1) {
-            const next = inc[Math.floor(Math.random() * inc.length)];
-            if (next !== a.edge) fire(next, node.id, a.strength * 0.55, 0.1 + Math.random() * 0.25);
-          }
-        }
-      }
-    }
-
-    // vie ambiante : des impulsions spontanées, de préférence sur les liens forts entre neurones vivants,
-    // plus nombreuses quand tu voles dans le réseau
+    // ambient life: idle impulses, more when navigating, more around the hovered constellation
     const tm = timers.current;
-    const rate =
-      level === 'vif'
-        ? (1.7 + Math.min(telemetry.speed, 60) * 0.12) * Math.min(2.2, Math.max(1, Math.sqrt(E / 60)))
-        : level === 'calme'
-          ? 0.6
-          : 0.85;
-    tm.ambient += dt * rate;
-    // le neurone survolé envoie un flot d'impulsions à ses voisins
-    const hi = hovId && level !== 'off' ? b.index.get(hovId) : undefined;
-    if (hi !== undefined && b.incident[hi].length) {
-      tm.hover += dt * (level === 'vif' ? 4 : 1.5);
-      while (tm.hover > 1) {
-        tm.hover -= 1;
-        const list = b.incident[hi];
-        fire(list[Math.floor(Math.random() * list.length)], hovId!, 0.85);
-      }
-    }
-    while (E > 0 && tm.ambient > 1) {
-      tm.ambient -= 1;
-      let best = -1;
-      let bestScore = 0;
-      for (let k = 0; k < 5; k++) {
+    if (E > 0) {
+      tm.idle += dt * (1.6 + Math.min(telemetry.speed, 60) * 0.18);
+      while (tm.idle > 1) {
+        tm.idle -= 1;
         const ei = Math.floor(Math.random() * E);
-        const A = L[layout.edgeIdx[ei * 2]];
-        const B = L[layout.edgeIdx[ei * 2 + 1]];
-        if (!A || !B) continue;
-        const ev = visuals.edges.get(layout.edges[ei].key);
-        const s = (ev?.strength ?? 0.5) * (1 + (ev?.fresh ?? 0)) * Math.min(A.vis, B.vis) * Math.max(A.bright, B.bright);
-        if (s > bestScore) {
-          bestScore = s;
-          best = ei;
+        const fromA = Math.random() < 0.5;
+        const ia = layout.edgeIdx[ei * 2];
+        const ib = layout.edgeIdx[ei * 2 + 1];
+        if (Math.min(L[ia].vis, L[ib].vis) > 0.3) {
+          pulses.pulse(ei, fromA, 0.45 + Math.random() * 0.4, b.baseColor[fromA ? ia : ib], fromA ? ib : ia);
         }
       }
-      if (best >= 0 && bestScore > 0.06) {
-        const ed = layout.edges[best];
-        const A = L[layout.edgeIdx[best * 2]];
-        const B = L[layout.edgeIdx[best * 2 + 1]];
-        // le neurone le plus vivant parle le premier (au hasard s'ils se valent)
-        const fromA = Math.abs(A.bright - B.bright) < 0.08 ? Math.random() < 0.5 : A.bright > B.bright;
-        fire(best, fromA ? ed.a : ed.b, 0.42 + Math.random() * 0.3);
+      const hIdx = ui.hoveredId ? L.findIndex((x) => x.id === ui.hoveredId) : -1;
+      if (hIdx >= 0 && b.incident[hIdx].length) {
+        tm.hover += dt * 5;
+        while (tm.hover > 1) {
+          tm.hover -= 1;
+          const list = b.incident[hIdx];
+          const ei = list[Math.floor(Math.random() * list.length)];
+          const fromA = layout.edges[ei].a === ui.hoveredId;
+          const other = fromA ? layout.edgeIdx[ei * 2 + 1] : layout.edgeIdx[ei * 2];
+          pulses.pulse(ei, fromA, 0.9, b.baseColor[hIdx], other);
+        }
       }
     }
+    pulses.update(dt, curves, E);
+
     tm.stats += dt;
-    if (tm.stats > 2) {
-      telemetry.pulsesPerMin = telemetry.pulsesPerMin * 0.5 + (tm.waves / tm.stats) * 60 * 0.5;
-      tm.waves = 0;
+    if (tm.stats > 1) {
+      const per = (pulses.spawned - tm.spawnedAt) / tm.stats;
+      telemetry.pulsesPerMin = telemetry.pulsesPerMin * 0.6 + per * 60 * 0.4;
+      tm.spawnedAt = pulses.spawned;
       tm.stats = 0;
     }
+
+    const pa = b.pointsGeo.attributes;
+    pa.position.needsUpdate = true;
+    pa.aInt.needsUpdate = true;
+    const ha = b.haloGeo.attributes;
+    ha.position.needsUpdate = true;
+    ha.aSize.needsUpdate = true;
+    ha.aInt.needsUpdate = true;
+    const aa = b.axonGeo.attributes;
+    aa.position.needsUpdate = true;
+    aa.aColor.needsUpdate = true;
   }, -2);
 
   return (
     <group>
-      <mesh geometry={built.linkGeo} material={mats.link} frustumCulled={false} renderOrder={1} />
-      <mesh geometry={built.nodeGeo} material={mats.node} frustumCulled={false} renderOrder={2} />
-      <points geometry={pulses.geo} material={mats.pulse} frustumCulled={false} renderOrder={3} />
+      <lineSegments geometry={built.axonGeo} material={mats.axon} frustumCulled={false} />
+      <lineSegments geometry={built.bundleGeo} material={mats.bundle} frustumCulled={false} />
+      <lineSegments geometry={built.webGeo} material={mats.web} frustumCulled={false} />
+      <points geometry={built.pointsGeo} material={mats.points} frustumCulled={false} />
+      <points geometry={built.haloGeo} material={mats.halo} frustumCulled={false} />
+      <points geometry={pulses.geo} material={mats.pulses} frustumCulled={false} />
+      <instancedMesh
+        key={built.n}
+        ref={coresRef}
+        args={[coreGeo, mats.core, Math.max(1, built.n)]}
+        frustumCulled={false}
+      />
     </group>
   );
 }

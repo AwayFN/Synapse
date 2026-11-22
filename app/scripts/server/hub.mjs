@@ -5,13 +5,13 @@
 //     cas des adresses gratuites trycloudflare.com, qui ne laissent pas passer les Server-Sent Events.
 import { initialsOf, json, randomToken } from './util.mjs';
 
-const VIEWS = new Set(['network', 'flux', 'agenda', 'tasks']);
+const VIEWS = new Set(['network', 'agenda', 'tasks']);
 /** Une requête en attente revient vide au bout de ce délai (bien en dessous des 100 s de Cloudflare) */
 const POLL_HOLD_MS = 25_000;
 /** Sans nouvelle requête depuis ce délai, la fenêtre est considérée comme fermée */
 const POLL_GONE_MS = 70_000;
 const QUEUE_MAX = 4000;
-const rightsKey = (m) => `${m.role}|${JSON.stringify(m.scope || { all: true, tags: [] })}`;
+const rightsKey = (m) => m.role;
 
 export class Hub {
   constructor({ brain, access, log, id = '', onView }) {
@@ -85,7 +85,7 @@ export class Hub {
       kind,
       member,
       visible: new Set(),
-      presence: { view: 'network', focus: null, editing: null, at: Date.now() },
+      presence: { view: 'network', focus: null, editing: null, at: Date.now(), since: 0 },
       queue: [],
       waiting: null,
       lastPoll: Date.now(),
@@ -192,13 +192,19 @@ export class Hub {
         brainId: this.id,
         me: { id: c.member.id, name: c.member.name, initials: initialsOf(c.member.name) },
         role: c.member.role,
-        scope: c.member.scope || { all: true, tags: [] },
         members: this.access.membersPublic(),
         brain: { id: this.id, name: this.access.brainName, ownerName: this.access.ownerName },
         presence: this.presenceFor(c),
       },
       snap.seq,
     );
+  }
+
+  /** Un élément tel qu'un invité le voit : le projet privé auquel il appartient reste caché */
+  forMember(m, e) {
+    if (m.role === 'owner' || !e.projectId) return e;
+    const p = this.brain.s.entities[e.projectId];
+    return p && this.brain.visible(m, p) ? e : { ...e, projectId: null };
   }
 
   /** Ce qu'un participant doit recevoir d'un lot de changements (avec les transitions de visibilité) */
@@ -209,7 +215,7 @@ export class Hub {
     const out = [];
     const reveal = (id) => {
       const e = S.entities[id];
-      out.push({ t: 'put', e: this.brain.forMember(m, e) });
+      out.push({ t: 'put', e: this.forMember(m, e) });
       c.visible.add(id);
       for (const l of S.links) {
         const other = l.a === id ? l.b : l.b === id ? l.a : null;
@@ -224,9 +230,10 @@ export class Hub {
         const was = c.visible.has(id);
         if (now && !was) reveal(id);
         else if (now && was) {
-          if (op.t === 'put') out.push({ t: 'put', e: this.brain.forMember(m, e) });
+          if (op.t === 'put') out.push({ t: 'put', e: this.forMember(m, e) });
           else {
             const { private: _p, ...f } = op.f;
+            if (f.projectId && !this.brain.visible(m, S.entities[f.projectId])) f.projectId = null;
             out.push({ t: 'patch', id, f });
           }
         } else if (!now && was) {
@@ -240,12 +247,10 @@ export class Hub {
         }
       } else if (op.t === 'link') {
         if (c.visible.has(op.l.a) && c.visible.has(op.l.b)) out.push(op);
-      } else if (op.t === 'linkPatch' || op.t === 'unlink') {
-        // le lien a pu disparaître du serveur (unlink) : on transmet si le participant le connaissait
+      } else if (op.t === 'unlink') {
+        // le lien a pu disparaître du serveur : on transmet si le participant le connaissait
         const l = S.links.find((x) => x.id === op.id);
         if (!l || (c.visible.has(l.a) && c.visible.has(l.b))) out.push(op);
-      } else if (op.t === 'kind') {
-        out.push(op);
       } else if (op.t === 'act') {
         if (this.brain.actVisible(m, op.a)) out.push(op);
       }
@@ -273,14 +278,29 @@ export class Hub {
     const now = Date.now();
     // temps passé dans la vue précédente (statistiques d'usage, sans le contenu)
     this.onView(c.presence.view, Math.min(60, (now - c.presence.at) / 1000));
+    let editing = member.role === 'owner' || member.role === 'edition' ? vis(p.editing) : null;
+    // une seule personne écrit à la fois dans un élément : si quelqu'un d'autre le tient déjà, la demande attend
+    const holder = editing ? this.lockHolder(editing) : null;
+    if (holder && holder.memberId !== member.id) editing = null;
     c.presence = {
       view: VIEWS.has(p.view) ? p.view : 'network',
       focus: vis(p.focus),
-      editing: vis(p.editing),
+      editing,
       at: now,
+      since: editing ? (c.presence.editing === editing ? c.presence.since : now) : 0,
     };
     this.presenceChanged();
     return true;
+  }
+
+  /** Qui écrit en ce moment dans cet élément (le premier arrivé), ou null */
+  lockHolder(entityId) {
+    let best = null;
+    for (const c of this.clients.values()) {
+      if (c.presence.editing !== entityId) continue;
+      if (!best || c.presence.since < best.presence.since) best = c;
+    }
+    return best ? { memberId: best.member.id, name: best.member.name, clientId: best.id } : null;
   }
 
   presenceFor(viewer) {

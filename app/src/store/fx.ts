@@ -7,7 +7,6 @@ export type FxEvent =
   | { kind: 'celebrate'; id: string }
   | { kind: 'touch'; id: string }
   | { kind: 'link'; a: string; b: string }
-  | { kind: 'strengthen'; a: string; b: string }
   | { kind: 'death'; id: string }
   | { kind: 'overview' };
 
@@ -18,9 +17,9 @@ const lastTouch = new Map<string, number>();
 export const fx = {
   emit(e: FxEvent) {
     if (e.kind === 'touch') {
-      // throttle "data changed" waves (typing fires this on every keystroke)
+      // throttle "data changed" pulses (typing fires this on every keystroke)
       const now = performance.now();
-      if (now - (lastTouch.get(e.id) ?? 0) < 900) return;
+      if (now - (lastTouch.get(e.id) ?? 0) < 700) return;
       lastTouch.set(e.id, now);
     }
     for (const l of listeners) l(e);

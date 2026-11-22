@@ -26,6 +26,8 @@ export interface InviteInfo {
   already?: 'owner' | 'member' | null;
   signup?: boolean;
   appName?: string;
+  /** il revient avec son lien (même invité qu'avant) : sans compte, ou avec son compte */
+  back?: 'guest' | 'account';
 }
 
 export interface SignupInfo {
@@ -57,6 +59,7 @@ export type Boot =
   | { kind: 'join'; token: string; info: InviteInfo; hello: Hello }
   | { kind: 'auth'; hello: Hello; code?: string; codeInfo?: SignupInfo; linkError?: boolean }
   | { kind: 'setup'; hello: Hello; token: string | null }
+  | { kind: 'first'; hello: Hello }
   | { kind: 'reset'; hello: Hello; token: string; info: { ok: boolean; name?: string; email?: string } }
   | { kind: 'maintenance'; hello: Hello }
   | { kind: 'suspended'; hello: Hello }
@@ -75,7 +78,7 @@ async function hello(brain: string | null): Promise<Hello | null> {
     const r = await fetch(`/api/hello${brain ? `?b=${encodeURIComponent(brain)}` : ''}`, { credentials: 'same-origin', cache: 'no-store' });
     if (!r.ok || !String(r.headers.get('content-type')).includes('json')) return null;
     const h = (await r.json()) as Hello;
-    return h.app === 'synapse' && h.proto === 4 ? h : null;
+    return h.app === 'synapse' && h.proto === 5 ? h : null;
   } catch {
     return null;
   }
@@ -132,6 +135,8 @@ export async function bootstrap(): Promise<Boot> {
     if (setup) history.replaceState(null, '', '/');
     return { kind: 'setup', hello: h, token: setup };
   }
+  // nouvelle installation : la personne devant ce PC crée d'abord son compte (un compte normal, pas admin)
+  if (h.server.firstRun && !invite) return { kind: 'first', hello: h };
   if (h.suspended) return { kind: 'suspended', hello: h };
   if (h.server.maintenance !== null && !h.account?.staff) return { kind: 'maintenance', hello: h };
 
@@ -179,7 +184,6 @@ export async function bootstrap(): Promise<Boot> {
       mode: 'initial',
       entities: s.entities,
       links: s.links,
-      kinds: s.kinds,
       activity: s.activity,
       layout: h.local ? localLayout() : {},
     }).catch(() => {});

@@ -8,11 +8,11 @@ import { Corners } from './common';
 function Frame({ children, wide }: { children: ReactNode; wide?: boolean }) {
   return (
     <div className="fixed inset-0 bg-black flex items-center justify-center p-6 overflow-y-auto">
-      <div className="absolute inset-0 opacity-60 pointer-events-none" style={{ background: 'radial-gradient(ellipse at 50% 40%, rgb(214 226 245 / 0.035), transparent 60%)' }} />
+      <div className="absolute inset-0 opacity-70 pointer-events-none" style={{ background: 'radial-gradient(ellipse at 50% 40%, rgb(255 46 136 / 0.06), transparent 60%)' }} />
       <div className={`relative ${wide ? 'w-[min(600px,100%)]' : 'w-[min(520px,100%)]'} glass neon p-8 anim-pop my-auto`}>
         <Corners />
         <div className="flex items-center gap-3">
-          <div className="w-2 h-2 rotate-45 bg-[rgb(var(--pearl))] shadow-[0_0_10px_rgb(var(--pearl)/0.7)]" />
+          <div className="w-2 h-2 rotate-45 bg-[#ff2e88] shadow-[0_0_12px_#ff2e88]" />
           <span className="hud text-[14px] font-semibold tracking-[0.42em] text-white">Synapse</span>
         </div>
         {children}
@@ -185,7 +185,7 @@ function AccountForm({
       )}
       {forgot && (
         <div className="text-[12px] text-white/55 leading-relaxed">
-          Demande à <span className="text-white/80">{creator}</span> un lien pour en choisir un nouveau : il le crée en un clic depuis son espace créateur.
+          Demande à <span className="text-white/80">{creator}</span> un lien pour en choisir un nouveau : il le crée en un clic depuis l’espace admin.
         </div>
       )}
       {showTerms && <Terms onClose={() => setShowTerms(false)} />}
@@ -280,6 +280,67 @@ export function AuthScreen({ hello, code: initialCode, codeInfo, linkError }: { 
   );
 }
 
+/**
+ * Nouvelle installation : avant tout, la personne crée son compte. C'est un compte normal (elle n'a pas
+ * l'espace admin) ; sur cet ordinateur, elle est ensuite reconnue sans retaper son mot de passe.
+ */
+export function FirstRunScreen({ hello }: { hello: Hello }) {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const submit = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api('/api/auth/first', { name, email, password });
+      location.replace('/');
+    } catch (e) {
+      setError(authMessage(e, hello.server.creatorName || 'le créateur'));
+      setBusy(false);
+    }
+  };
+  return (
+    <Frame wide>
+      <div className="hud text-[10px] text-[#00e5ff] mt-7">Bienvenue · première ouverture</div>
+      <div className="text-[24px] font-semibold tracking-tight text-white mt-1.5">Crée ton compte Synapse</div>
+      <div className="text-[13.5px] text-white/60 mt-2 leading-relaxed">
+        Synapse, c’est ton réseau personnel en 3D : tes projets, tes tâches, tes notes et ton emploi du temps, tous reliés. Ton cerveau est enregistré sur cet
+        ordinateur. Ton compte te sert aussi à le retrouver sur ton téléphone, et à rejoindre le cerveau d’un ami.
+      </div>
+      <form
+        className="mt-6 flex flex-col gap-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+      >
+        <label className="flex flex-col gap-1.5">
+          <span className="xs-label">Ton prénom (les autres le verront)</span>
+          <input className="field !text-[14px] !py-2" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} autoComplete="given-name" autoFocus />
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="xs-label">Adresse e-mail</span>
+          <input className="field !text-[14px] !py-2" type="email" value={email} onChange={(e) => setEmail(e.target.value)} maxLength={120} autoComplete="email" />
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="xs-label">Mot de passe (8 caractères au moins)</span>
+          <input className="field !text-[14px] !py-2" type="password" value={password} onChange={(e) => setPassword(e.target.value)} maxLength={200} autoComplete="new-password" />
+        </label>
+        {error && <div className="text-[12.5px] text-[rgb(var(--alert))]">{error}</div>}
+        <button type="submit" className="btn btn-primary !py-2.5 !text-[11px] mt-1" disabled={busy || !name.trim() || !email.trim() || password.length < 8}>
+          {busy ? 'Un instant…' : 'Créer mon compte et commencer →'}
+        </button>
+      </form>
+      <div className="text-[11px] text-white/35 mt-5 leading-relaxed">
+        Un ami t’a envoyé un lien d’invitation ? Ouvre-le directement : il te mènera à son cerveau. Ton mot de passe n’est jamais enregistré en clair.
+      </div>
+    </Frame>
+  );
+}
+
 const REASON: Record<string, string> = {
   used: 'Ce lien a déjà servi. Demande un nouveau lien à',
   expired: 'Ce lien a expiré. Demande un nouveau lien à',
@@ -294,7 +355,7 @@ export function JoinScreen({ token, info, hello }: { token: string; info: Invite
   const [name, setName] = useState(info.name || '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(info.ok ? null : info.reason ?? 'unknown');
-  const [path, setPath] = useState<'choose' | 'signup' | 'login'>('choose');
+  const [path, setPath] = useState<'choose' | 'signup' | 'login'>(info.back === 'account' && !hello.account ? 'login' : 'choose');
   const owner = info.ownerName || 'son propriétaire';
   const account = hello.account;
   const go = () => location.replace(`/?cerveau=${encodeURIComponent(info.brainId || '')}`);
@@ -324,27 +385,40 @@ export function JoinScreen({ token, info, hello }: { token: string; info: Invite
       </Frame>
     );
   }
-  const scope = info.scope;
+  // il revient avec son lien (après un changement d'adresse, ou sur un autre appareil) : un seul bouton
+  if (info.back === 'guest' && !account) {
+    return (
+      <Frame>
+        <div className="hud text-[10px] text-white/45 mt-7">Te revoilà</div>
+        <div className="text-[22px] font-semibold tracking-tight text-white mt-1.5">{info.name || 'Bonjour'} !</div>
+        <div className="text-[14px] text-white/60 mt-2 leading-relaxed">
+          Tu reviens dans « {info.brainName} », le cerveau {deName(owner)}. Tu retrouves ta place : {ROLE_HINT_GUEST[info.role ?? 'lecture']}.
+        </div>
+        <button className="btn btn-primary !py-2.5 !text-[11px] mt-6" disabled={busy} onClick={() => void joinAsGuest()}>
+          {busy ? 'Connexion…' : 'Revenir dans le cerveau →'}
+        </button>
+      </Frame>
+    );
+  }
   return (
     <Frame wide>
       <div className="hud text-[10px] text-white/45 mt-7">Invitation</div>
       <div className="text-[24px] font-semibold tracking-tight text-white mt-1.5">« {info.brainName} »</div>
       <div className="text-[14px] text-white/60 mt-2 leading-relaxed">
-        <span className="text-white">{owner}</span> t’invite dans son second cerveau : un réseau en 3D de ses idées, projets, moments et références, que tu explores en
-        direct. Rien à installer.
+        <span className="text-white">{owner}</span> t’invite dans son second cerveau : ses projets, ses tâches, ses notes et son emploi du temps, reliés en un réseau 3D
+        que tu explores en direct. Rien à installer.
       </div>
       <div className="mt-5 flex flex-col gap-2 text-[12.5px]">
         <div className="flex gap-3">
-          <span className="xs-label w-[64px] pt-[2px] flex-none">Rôle</span>
+          <span className="xs-label w-[64px] pt-[2px] flex-none">Tu</span>
           <span className="text-white/75">
             <span className="hud text-[10px] text-white">{ROLE_LABEL[info.role ?? 'lecture']}</span> — {ROLE_HINT_GUEST[info.role ?? 'lecture']}.
           </span>
         </div>
-        <div className="flex gap-3">
-          <span className="xs-label w-[64px] pt-[2px] flex-none">Zone</span>
-          <span className="text-white/75">{!scope || scope.all ? 'tout ce qu’il partage' : scope.tags.map((t) => `#${t}`).join('  ')}</span>
-        </div>
       </div>
+      {info.back === 'account' && !account && (
+        <div className="text-[12.5px] text-white/60 mt-4">Tu as déjà ta place dans ce cerveau : connecte-toi avec ton compte pour la retrouver.</div>
+      )}
 
       {account ? (
         <div className="mt-7 flex flex-col gap-3">
@@ -432,7 +506,7 @@ export function SetupScreen({ token }: { token: string | null }) {
     <Frame>
       <div className="hud text-[10px] text-white/45 mt-7">Installation · compte créateur</div>
       <div className="text-[13.5px] text-white/60 mt-2 leading-relaxed">
-        Bienvenue ! Ce compte aura tous les droits sur ce serveur : espace créateur, inscriptions, réglages.
+        Bienvenue ! Ce compte aura tous les droits sur ce serveur : espace admin, inscriptions, réglages.
       </div>
       <form
         className="mt-5 flex flex-col gap-3"

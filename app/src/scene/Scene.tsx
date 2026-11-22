@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { PerformanceMonitor } from '@react-three/drei';
 import { Bloom, EffectComposer, Vignette } from '@react-three/postprocessing';
@@ -46,32 +46,6 @@ function FrameLimiter() {
   return null;
 }
 
-/** Dev only: time spent in each stage of a frame (window.__perf) */
-function PerfProbe() {
-  const marks = useMemo(() => ({ t: new Float64Array(8), avg: { layout: 0, controls: 0, galaxy: 0, labels: 0, render: 0 } }), []);
-  const at = (i: number) => () => {
-    marks.t[i] = performance.now();
-  };
-  useFrame(at(0), -10);
-  useFrame(at(1), -3.5);
-  useFrame(at(2), -2.5);
-  useFrame(at(3), -1.5);
-  useFrame(at(4), -0.5);
-  useFrame(() => {
-    const t = marks.t;
-    const now = performance.now();
-    const a = marks.avg;
-    const k = 0.1;
-    a.layout += (t[1] - t[0] - a.layout) * k;
-    a.controls += (t[2] - t[1] - a.controls) * k;
-    a.galaxy += (t[3] - t[2] - a.galaxy) * k;
-    a.labels += (t[4] - t[3] - a.labels) * k;
-    a.render += (now - t[4] - a.render) * k;
-    (window as unknown as { __perf: unknown }).__perf = a;
-  }, 10);
-  return null;
-}
-
 function LayoutDriver() {
   useFrame((state, dt) => layout.step(Math.min(dt, 0.05), state.clock.elapsedTime), -4);
   return null;
@@ -92,8 +66,7 @@ function World() {
 }
 
 export function Scene() {
-  // sur téléphone, un peu moins de pixels : l'écran est petit, la batterie compte
-  const [dpr, setDpr] = useState(Math.min(window.devicePixelRatio || 1, window.innerWidth < 768 ? 1.5 : 1.75));
+  const [dpr, setDpr] = useState(Math.min(window.devicePixelRatio || 1, 1.75));
   return (
     <Canvas
       frameloop="never"
@@ -101,23 +74,20 @@ export function Scene() {
       gl={{ antialias: false, alpha: false, powerPreference: 'high-performance', stencil: false }}
       camera={{ fov: 58, near: 0.1, far: 6000, position: [0, 60, 420] }}
       onCreated={({ gl, scene }) => {
-        // noir pur : aucun dégradé ni halo possible dans le vide
         gl.setClearColor(0x000000, 1);
         scene.background = new THREE.Color(0x000000);
       }}
       style={{ position: 'absolute', inset: 0 }}
     >
       <FrameLimiter />
-      {import.meta.env.DEV && <PerfProbe />}
       <PerformanceMonitor
         onDecline={() => setDpr((d) => Math.max(1, d - 0.25))}
         onIncline={() => setDpr((d) => Math.min(window.devicePixelRatio || 1, 1.75, d + 0.25))}
       />
       <World />
       <EffectComposer multisampling={0}>
-        {/* néon : noyaux, branches, axones et impulsions rayonnent ; le fond reste noir pur */}
-        <Bloom mipmapBlur intensity={0.95} luminanceThreshold={0.28} luminanceSmoothing={0.4} radius={0.7} />
-        <Vignette offset={0.22} darkness={0.78} />
+        <Bloom mipmapBlur intensity={1.15} luminanceThreshold={0.16} luminanceSmoothing={0.4} radius={0.72} />
+        <Vignette offset={0.2} darkness={0.85} />
       </EffectComposer>
     </Canvas>
   );

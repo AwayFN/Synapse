@@ -1,84 +1,101 @@
-/**
- * Synapse V2 — un seul type d'élément : le neurone.
- * Une pensée, une tâche, un projet, un rendez-vous, un livre… tout est un neurone.
- * Le « genre » (kind) est un mot libre et facultatif ; les facettes (statut, moment, échéance)
- * ajoutent des comportements (vue Tâches, vue Agenda) sans jamais être obligatoires.
- */
+export type EntityType = 'project' | 'task' | 'note' | 'slot';
+export type ProjectStatus = 'active' | 'done';
+export type TaskStatus = 'todo' | 'doing' | 'done';
 
-/** Grande famille d'un neurone : c'est la seule chose que dit la couleur */
-export type Nature = 'pensee' | 'action' | 'temps' | 'monde';
-export type Status = 'todo' | 'doing' | 'done';
-export type ViewMode = 'network' | 'flux' | 'agenda' | 'tasks';
-
-/** Un moment : un jour, éventuellement une heure de début et de fin (minutes depuis minuit) */
-export interface When {
-  /** YYYY-MM-DD */
-  date: string;
-  /** minutes depuis minuit ; null = pas d'heure précise (toute la journée) */
-  start: number | null;
-  /** minutes depuis minuit ; null = pas de fin ; fin <= début = se termine le lendemain */
-  end: number | null;
-}
-
-export interface Entity {
+interface BaseEntity {
   id: string;
+  type: EntityType;
   title: string;
-  body: string;
-  /** mot libre, forme d'affichage en minuscules ('' = pensée brute) */
-  kind: string;
-  tags: string[];
-  /** facette « action » → vue Tâches */
-  status: Status | null;
-  /** facette « moment » → vue Agenda */
-  when: When | null;
-  /** échéance YYYY-MM-DD */
-  due: string | null;
-  pinned: boolean;
-  /** ordre dans une colonne du kanban */
-  order: number;
+  /** Hex color, unique-ish per constellation */
+  color: string;
   createdAt: number;
   updatedAt: number;
-  /** dernière fois qu'il a été ouvert, modifié ou traversé : nourrit sa vitalité */
-  touchedAt: number;
-  doneAt: number | null;
-  /** donnée d'exemple créée au premier lancement */
+  /** Example data created on first launch */
   seed?: boolean;
-  /** visible seulement par le propriétaire du cerveau, jamais par les invités */
+  /** jamais montré aux personnes invitées dans ce cerveau */
   private?: boolean;
-  /** participant qui l'a capturé ('owner' = le propriétaire) */
+  /** qui l'a créé / modifié en dernier (cerveau partagé) */
   createdBy?: string;
   updatedBy?: string;
 }
 
-export type LinkOrigin = 'manuel' | 'capture' | 'mention';
+export interface Project extends BaseEntity {
+  type: 'project';
+  description: string;
+  status: ProjectStatus;
+  /** YYYY-MM-DD */
+  deadline: string | null;
+}
+
+export interface Task extends BaseEntity {
+  type: 'task';
+  description: string;
+  projectId: string | null;
+  status: TaskStatus;
+  /** YYYY-MM-DD */
+  date: string | null;
+  /** minutes since midnight */
+  time: number | null;
+  order: number;
+  doneAt: number | null;
+}
+
+export interface Note extends BaseEntity {
+  type: 'note';
+  content: string;
+  tags: string[];
+}
+
+export interface Slot extends BaseEntity {
+  type: 'slot';
+  description: string;
+  /** projet sur lequel porte ce créneau (« Sans projet » sinon) */
+  projectId: string | null;
+  /** YYYY-MM-DD (day the slot starts) */
+  date: string;
+  /** minutes since midnight, 0..1439 */
+  start: number;
+  /** minutes since midnight, 0..1439 — if end <= start the slot ends the next day */
+  end: number;
+}
+
+export type Entity = Project | Task | Note | Slot;
+
+/** Les tâches et les créneaux peuvent appartenir à un projet (lien « parent ») */
+export const hasProject = (e: Entity | undefined | null): e is Task | Slot => !!e && (e.type === 'task' || e.type === 'slot');
 
 export interface Link {
   id: string;
   a: string;
   b: string;
   createdAt: number;
-  /** 0..1 — grandit chaque fois que la connexion est empruntée */
-  strength: number;
-  usedAt: number;
-  origin: LinkOrigin;
-  createdBy?: string;
 }
 
 export interface Activity {
   id: string;
   at: number;
   text: string;
-  tone: Nature | 'alert' | 'system';
+  color: string;
   entityId?: string;
-  /** neurones concernés (pour ne montrer aux invités que ce qu'ils ont le droit de voir) */
-  refs?: string[];
-  priv?: boolean;
-  tags?: string[];
-  /** auteur ('owner' = le propriétaire) */
-  by?: string;
 }
 
-export const STATUS_LABEL: Record<Status, string> = {
+export type ViewMode = 'network' | 'agenda' | 'tasks';
+
+export const TYPE_LABEL: Record<EntityType, string> = {
+  project: 'Projet',
+  task: 'Tâche',
+  note: 'Note',
+  slot: 'Créneau',
+};
+
+export const TYPE_PLURAL: Record<EntityType, string> = {
+  project: 'Projets',
+  task: 'Tâches',
+  note: 'Notes',
+  slot: 'Créneaux',
+};
+
+export const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
   todo: 'À faire',
   doing: 'En cours',
   done: 'Fait',

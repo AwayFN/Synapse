@@ -1,11 +1,9 @@
 import { useData } from '../store/data';
 import { useUI } from '../store/ui';
 
-/** Nouvelle pensée vide, ouverte directement dans l'éditeur plein écran */
-export function newThought(title = '') {
-  const ui = useUI.getState();
-  const context = ui.selectedId && useData.getState().entities[ui.selectedId] ? [ui.selectedId] : [];
-  const n = useData.getState().create({ title }, { linkTo: context, origin: 'capture', strength: 0.55 });
-  ui.openEditor(n.id);
+/** Ctrl+N: empty note, born in front of the camera, opened in the editor */
+export function newNote(title = '') {
+  const n = useData.getState().createNote({ title });
+  useUI.getState().openEditor(n.id);
   return n;
 }

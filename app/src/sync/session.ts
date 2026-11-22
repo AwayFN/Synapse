@@ -4,7 +4,8 @@ import { create } from 'zustand';
  * Session de partage : qui je suis dans ce cerveau, avec quels droits, qui d'autre est là.
  * En mode « local » (pas de serveur, ou serveur d'une ancienne version) tout est permis, comme avant.
  */
-export type Role = 'owner' | 'edition' | 'contribution' | 'lecture';
+/** Dans un cerveau : son propriétaire, ou une personne invitée qui « peut modifier » ou « peut regarder » */
+export type Role = 'owner' | 'edition' | 'lecture';
 export type Mode = 'local' | 'connecting' | 'online' | 'offline' | 'closed' | 'revoked' | 'suspended' | 'deleted' | 'loggedout' | 'maintenance';
 
 /** Rôle sur le serveur Synapse (pas dans un cerveau) */
@@ -19,7 +20,10 @@ export interface Account {
   brainId: string;
   createdAt: number;
   local: boolean;
+  /** créateur ou admin : voit l'espace admin */
   staff: boolean;
+  /** le compte de l'ordinateur qui fait tourner Synapse (il ouvre les accès Wi-Fi et Internet) */
+  pc?: boolean;
 }
 
 export interface BrainCard {
@@ -41,6 +45,8 @@ export interface ServerInfo {
   name: string;
   registration: 'ouverte' | 'invitation' | 'fermee';
   setup: boolean;
+  /** nouvelle installation : la personne devant ce PC crée son compte */
+  firstRun?: boolean;
   creatorName: string;
   maintenance: string | null;
   announcement: Announcement | null;
@@ -95,13 +101,27 @@ export interface MemberDetail extends Member {
   createdAt: number;
   lastSeen: number | null;
   inviteId: string | null;
+  /** son lien personnel pour revenir (invitation pour une personne), « idCerveau.jeton » */
+  link?: string | null;
 }
 
 export type NetState = 'off' | 'needs-consent' | 'downloading' | 'starting' | 'on' | 'error';
 
 export interface ShareStatus {
   lan: { on: boolean; urls: string[]; error: string | null };
-  internet: { state: NetState; url: string | null; error: string | null; progress: number; toolReady: boolean; fixed?: boolean };
+  internet: {
+    state: NetState;
+    url: string | null;
+    error: string | null;
+    progress: number;
+    toolReady: boolean;
+    fixed?: boolean;
+    /** coupure : relance automatique en attente */
+    retrying?: boolean;
+    /** l'adresse d'avant (elle change à chaque redémarrage de Synapse) */
+    previous?: string | null;
+    changedAt?: number;
+  };
   /** les accès Wi-Fi / Internet se règlent depuis ce cerveau (celui du PC qui fait tourner Synapse) */
   manageAccess?: boolean;
   brainId?: string;
@@ -149,22 +169,19 @@ export interface SessionState {
 
 export const ROLE_LABEL: Record<Role, string> = {
   owner: 'propriétaire',
-  edition: 'édition',
-  contribution: 'contribution',
-  lecture: 'lecture',
+  edition: 'peut modifier',
+  lecture: 'peut regarder',
 };
 
 export const ROLE_HINT: Record<Exclude<Role, 'owner'>, string> = {
-  lecture: 'explore, cherche et lit tout ce que tu partages, sans rien modifier',
-  contribution: 'ajoute ses propres pensées et les relie aux tiennes ; ne touche pas aux tiennes',
-  edition: 'modifie, relie et range tout ce qu’il voit, comme toi (sauf le partage)',
+  lecture: 'regarde tout (réseau, notes, tâches, emploi du temps), sans rien pouvoir changer',
+  edition: 'écrit, crée, relie et modifie tout, comme toi (une seule personne à la fois dans une même note)',
 };
 
 /** Les mêmes rôles, expliqués à l'invité lui-même */
 export const ROLE_HINT_GUEST: Record<Exclude<Role, 'owner'>, string> = {
-  lecture: 'tu explores, cherches et lis tout ce qui est partagé, sans rien modifier',
-  contribution: 'tu ajoutes tes propres pensées et tu les relies aux siennes ; tu ne modifies pas les siennes',
-  edition: 'tu modifies, relies et ranges tout ce que tu vois, comme lui',
+  lecture: 'tu regardes tout (réseau, notes, tâches, emploi du temps), sans rien modifier',
+  edition: 'tu écris, crées, relies et modifies tout, comme lui (une seule personne à la fois dans une même note)',
 };
 
 export const useSession = create<SessionState>(() => ({

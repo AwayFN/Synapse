@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 
 const PORT = Number(process.env.SYNAPSE_PORT) || 5173;
 /** version of the server API (the launcher replaces an older running server) */
-const PROTO = 4;
+const PROTO = 5;
 const APP_URL = `http://localhost:${PORT}/`;
 const SELF = fileURLToPath(import.meta.url);
 const APP_DIR = path.resolve(path.dirname(SELF), '..');
@@ -297,6 +297,17 @@ async function serve() {
 }
 
 // ───────────────────────────── main ─────────────────────────────
+
+// Node.js trop ancien : un message clair plutôt qu'une erreur incompréhensible plus loin
+if (Number(process.versions.node.split('.')[0]) < 18) {
+  if (process.platform === 'win32' && !args.has('--serve')) {
+    spawn('rundll32.exe', ['url.dll,FileProtocolHandler', 'https://nodejs.org/fr/download'], { detached: true, stdio: 'ignore' }).unref();
+  }
+  fail(
+    `Ta version de Node.js (${process.version}) est trop ancienne pour Synapse.\n` +
+      `Installe la version LTS (la page de téléchargement s'ouvre), puis relance Synapse.`,
+  );
+}
 
 if (args.has('--serve')) {
   serve();

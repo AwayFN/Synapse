@@ -4,7 +4,15 @@
  */
 let installed = false;
 let sent = 0;
+let build = '';
 const seen = new Set<string>();
+
+/** Une erreur rattrapée par l'application (ex. la 3D qui ne démarre pas) : remonte aussi, sans rien casser */
+export function reportError(err: unknown, where = '') {
+  const e = err as { message?: string; stack?: string } | undefined;
+  if (!installed) return;
+  report(`${where ? `${where} : ` : ''}${String(e?.message ?? err ?? 'erreur')}`, String(e?.stack ?? ''), build);
+}
 
 function report(message: string, stack: string, version: string) {
   const key = `${message}|${stack.split('\n')[1] ?? ''}`;
@@ -23,6 +31,7 @@ function report(message: string, stack: string, version: string) {
 export function installErrorReporter(version: string) {
   if (installed) return;
   installed = true;
+  build = version;
   window.addEventListener('error', (e) => {
     if (!e.error && !e.message) return;
     report(String(e.message || e.error?.message || 'erreur'), String(e.error?.stack || `${e.filename}:${e.lineno}:${e.colno}`), version);

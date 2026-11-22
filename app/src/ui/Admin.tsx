@@ -1,15 +1,21 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, ApiError } from '../sync/client';
 import { linkBases, SERVER_ROLE_LABEL, useSession, type ServerRole } from '../sync/session';
-import { ALERT_HEX, NATURE_ORDER, NATURES } from '../lib/kinds';
-import type { Nature } from '../types';
+import { ALERT_HEX } from '../lib/color';
+
+/** Ce qui est créé (des chiffres seulement, jamais le contenu) */
+const CREATED = [
+  { key: 'action', label: 'Projets et tâches', color: '#00e5ff' },
+  { key: 'pensee', label: 'Notes', color: '#a855f7' },
+  { key: 'temps', label: 'Créneaux', color: '#ffb020' },
+];
 import { fmtRelative } from '../lib/time';
-import { Corners, cvar, Glyph, Kbd } from './common';
+import { Corners, cvar, Kbd } from './common';
 import { CopyButton } from './Account';
 import { AccessCards } from './ShareDialog';
 
 /**
- * Espace créateur : tout ce qu'il faut savoir et régler sur son serveur Synapse.
+ * Espace admin : tout ce qu'il faut savoir et régler sur son serveur Synapse (créateur et admins seulement).
  * Des chiffres et des métadonnées, jamais le contenu des cerveaux (respect des utilisateurs, et RGPD).
  */
 
@@ -326,7 +332,7 @@ function HBars({ rows }: { rows: { key: string; label: ReactNode; value: number;
   );
 }
 
-const VIEW_LABEL: Record<string, string> = { network: 'Réseau 3D', flux: 'Flux', agenda: 'Agenda', tasks: 'Tâches' };
+const VIEW_LABEL: Record<string, string> = { network: 'Réseau 3D', agenda: 'Emploi du temps', tasks: 'Tâches' };
 
 function OverviewTab() {
   const { data: o, error } = useApi<Overview>('/api/admin/overview', 15000);
@@ -348,17 +354,17 @@ function OverviewTab() {
         <Panel title="Vues utilisées · 30 jours">
           <HBars rows={Object.entries(VIEW_LABEL).map(([k, label]) => ({ key: k, label, value: o.views[k] || 0, display: fmtHours(o.views[k] || 0) }))} />
         </Panel>
-        <Panel title="Ce qui est capturé · 30 jours">
+        <Panel title="Ce qui est créé · 30 jours">
           <HBars
-            rows={NATURE_ORDER.map((n: Nature) => ({
-              key: n,
+            rows={CREATED.map((c) => ({
+              key: c.key,
               label: (
                 <>
-                  <Glyph nature={n} size={11} /> {NATURES[n].plural}
+                  <span className="inline-block w-[7px] h-[7px] mr-1.5" style={{ background: c.color, boxShadow: `0 0 6px ${c.color}` }} /> {c.label}
                 </>
               ),
-              value: o.natures[n] || 0,
-              display: String(o.natures[n] || 0),
+              value: o.natures[c.key] || 0,
+              display: String(o.natures[c.key] || 0),
             }))}
           />
         </Panel>
@@ -378,7 +384,8 @@ function UserRow({ u, me, isCreator, onChange }: { u: User; me: string; isCreato
   const [open, setOpen] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [reset, setReset] = useState<string | null>(null);
-  const manageable = u.id !== me && (isCreator || u.role === 'membre');
+  // un admin a les mêmes droits que le créateur ; seul le compte du créateur reste protégé
+  const manageable = u.id !== me && (isCreator || u.role !== 'createur');
   const act = async (path: string, body: Record<string, unknown>, confirmText?: string) => {
     if (confirmText && !window.confirm(confirmText)) return;
     setMsg(null);
@@ -440,14 +447,22 @@ function UserRow({ u, me, isCreator, onChange }: { u: User; me: string; isCreato
           </div>
           {manageable ? (
             <div className="flex flex-wrap items-center gap-2">
-              {isCreator && (
-                <select className="field !w-[130px] !py-1 !text-[11.5px]" value={u.role} onChange={(e) => void act('/api/admin/users/update', { role: e.target.value })}>
-                  {(['membre', 'admin', 'createur'] as ServerRole[]).map((r) => (
-                    <option key={r} value={r}>
-                      {SERVER_ROLE_LABEL[r]}
-                    </option>
-                  ))}
-                </select>
+              {u.role !== 'createur' && (
+                <button
+                  className={`btn !text-[9.5px] ${u.role === 'admin' ? '' : 'btn-primary'}`}
+                  data-make-admin
+                  onClick={() =>
+                    void act(
+                      '/api/admin/users/update',
+                      { role: u.role === 'admin' ? 'membre' : 'admin' },
+                      u.role === 'admin'
+                        ? `Retirer à ${u.name} son rôle d’admin ? Il redevient un utilisateur normal, sans l’espace admin.`
+                        : `Nommer ${u.name} admin ? Il aura exactement les mêmes droits que toi : voir tous les utilisateurs, les gérer, régler Synapse.`,
+                    )
+                  }
+                >
+                  {u.role === 'admin' ? 'Retirer admin' : '★ Nommer admin'}
+                </button>
               )}
               <button
                 className="btn !text-[9.5px]"
@@ -475,7 +490,7 @@ function UserRow({ u, me, isCreator, onChange }: { u: User; me: string; isCreato
               </button>
             </div>
           ) : (
-            <div className="text-[11px] text-white/35">{u.id === me ? 'C’est toi.' : 'Seul un créateur peut gérer ce compte.'}</div>
+            <div className="text-[11px] text-white/35">{u.id === me ? 'C’est toi.' : 'Le compte du créateur ne peut être géré que par lui.'}</div>
           )}
           {reset && (
             <div className="glass p-3 flex flex-col gap-2">
@@ -542,7 +557,7 @@ function PeopleTab() {
         )}
       </div>
       <div className="text-[11px] text-white/35 leading-relaxed">
-        Créateur : tous les droits · Admin : gère les membres, lit les retours et les statistiques · Membre : utilise Synapse. Les mots de passe ne sont jamais visibles
+        Créateur et admins : exactement les mêmes droits (voir et gérer tout le monde, régler Synapse) · Membre : utilise Synapse, sans espace admin. Toi seul nommes ou retires les admins au départ ; ensuite un admin peut aussi le faire. Les mots de passe ne sont jamais visibles
         (seulement leur empreinte) ; pour un oubli, crée un lien de nouveau mot de passe.
       </div>
     </div>
@@ -943,7 +958,7 @@ function SettingsTab() {
           <span className="text-[11px] text-white/35 ml-2">« {'{createur}'} » est remplacé par ton prénom. Vide = pas de case à cocher.</span>
         </div>
       </Panel>
-      {!isCreator && <div className="text-[11.5px] text-white/40">Admin : tu peux publier une annonce ; le reste est réservé au créateur.</div>}
+      
     </div>
   );
 }
@@ -1098,7 +1113,7 @@ export function AdminPanel() {
         <div className="flex items-center gap-4 px-7 pt-6 pb-4 border-b border-white/[0.06]">
           <div className="w-2 h-2 rotate-45 bg-[rgb(var(--pearl))] shadow-[0_0_10px_rgb(var(--pearl)/0.7)]" />
           <div>
-            <div className="hud text-[11px] text-white/85">Espace créateur · {name || 'Synapse'}</div>
+            <div className="hud text-[11px] text-white/85">Espace admin · {name || 'Synapse'}</div>
             <div className="text-[12px] text-white/40 mt-0.5">
               {account.name || 'Créateur'} · {SERVER_ROLE_LABEL[account.role]}
             </div>

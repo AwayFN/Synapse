@@ -1,164 +1,95 @@
-﻿SYNAPSE · ton second cerveau (V4)
-=================================
+﻿SYNAPSE · ton réseau personnel en 3D (V5)
+=========================================
 
 Pour ouvrir l'application : double-clique sur « Lancer Synapse ».
+Premier lancement : crée ton compte (prénom, e-mail, mot de passe).
 
-Synapse s'ouvre dans sa propre fenêtre, sans onglets ni barre d'adresse.
-La première fois, ou après une modification du code, il peut se passer
-quelques secondes avant que la fenêtre apparaisse.
+- Synapse a besoin de Node.js (gratuit, version LTS) : nodejs.org
+- Si Windows demande « Voulez-vous exécuter ce fichier ? » : Exécuter.
+- Si le fichier est bloqué : clic droit sur le .zip téléchargé >
+  Propriétés > coche « Débloquer » > OK, puis extrais-le de nouveau.
+- Ne lance pas Synapse depuis l'intérieur du .zip : extrais-le d'abord
+  (clic droit > Extraire tout).
 
-Capturer : un seul geste pour tout
-----------------------------------
-Ctrl+K (ou le bouton « Capturer » en bas), tu écris, Entrée. C'est tout.
-Aucune catégorie à choisir : une phrase brute devient une pensée.
-Tout le reste est facultatif et peut se mélanger dans la même phrase :
-  - un genre : « tâche … », « note … », « idée: … », « recette: … »
-    (n'importe quel mot suivi de deux-points devient un genre)
-  - un moment : 7h02, 22h45, 12h01-17h38, demain, lundi, 24/12, ce soir
-  - une échéance : avant vendredi, deadline 30/12
-  - un lien : @Projet_App, @"Voyage au Japon", [[Léa]]
-    (si le nom n'existe pas encore, il est créé et relié)
-  - un tag : #idee      important : !      privé : !privé
-Si un neurone est ouvert, la capture s'y relie toute seule.
-Ctrl+Entrée = capturer puis développer en plein écran.
-Alt+Entrée = capturer et enchaîner la suivante.
-Pour chercher : tape « / » puis tes mots (les résultats s'allument dans
-le réseau). Pour les commandes (export, import…) : tape « > ».
+Ce que tu y trouves
+-------------------
+- Tes projets, tâches, notes et créneaux, reliés dans un réseau en 3D
+  où tu voles au milieu de tes idées (molette, clic droit, Z Q S D).
+- Les notes s'ouvrent en grand, presque tout l'écran (comme le
+  Bloc-notes), avec en bas la ligne, la colonne, les caractères et les
+  mots. Tags et liens sont juste sous le titre.
+- L'emploi du temps : ta semaine en grille, les heures à gauche.
+  Glisse dans la grille pour créer un créneau, glisse-le pour le
+  déplacer, tire son bas pour changer sa durée, clique dessus pour le
+  régler. Chaque créneau peut appartenir à un projet (« Sans projet »
+  sinon) ; la fiche du projet montre le temps qui lui est consacré.
+- Les tâches : un tableau à faire / en cours / fait.
+- Tout se relie : « + Lier à… » dans chaque fiche et en haut de chaque
+  note relie une note, une tâche, un projet ou un créneau à n'importe
+  quel autre. Une tâche ou un créneau peut appartenir à un projet.
 
-Retrouver : par les liens
+Raccourcis
+----------
+Ctrl+K           créer ou chercher, en une phrase :
+                   note Idée startup #idee
+                   tâche Appeler Léa @Projet_App demain 14h
+                   projet Site vitrine deadline 30/12
+                   créneau 12h01-17h38 Deep work @App
+Ctrl+N ou Alt+N  nouvelle note, en plein écran
+Tab              emploi du temps      Maj+Tab   tâches
+Échap            retour au réseau     ?         l'aide complète
+
+Partager ton cerveau
+--------------------
+Bouton « Partager », en haut à droite :
+1. Le prénom de la personne (facultatif), puis ce qu'elle peut faire :
+   « Peut modifier » ou « Peut seulement regarder ».
+2. « Créer le lien d'invitation » : Synapse ouvre une adresse Internet
+   sécurisée et gratuite (la première fois, il te demande ton accord
+   pour télécharger l'outil gratuit cloudflared). Pour quelqu'un chez
+   toi : « même Wi-Fi ».
+3. Envoie le lien (SMS, WhatsApp…). La personne n'a rien à installer :
+   elle l'ouvre dans son navigateur, sur ordinateur ou téléphone.
+- Une seule personne écrit à la fois dans une même note : les autres
+  la voient en lecture seule, avec son prénom, jusqu'à ce qu'elle ait
+  fini.
+- Les éléments marqués 🔒 privé (case dans leur fiche) ne sont jamais
+  montrés aux personnes invitées.
+- Ton ordinateur doit rester allumé. Synapse reste ouvert en arrière-
+  plan tant qu'un accès est ouvert, même fenêtre fermée.
+- L'adresse Internet gratuite change quand Synapse redémarre : dans
+  « Partager », le bouton « Lien » à côté de chaque personne lui renvoie
+  son lien ; elle revient à sa place, rien n'est perdu.
+
+Les comptes et les admins
 -------------------------
-- Clique un neurone : ses connexions s'allument, le reste s'efface.
-- Maj+clic sur un autre neurone : les relier (ou les délier).
-- Le panneau montre ses connexions, ce qui est « plus loin » et les
-  « connexions possibles » que Synapse te suggère (un clic pour relier).
-- Alt+← revient au neurone précédent : c'est ton fil de pensée.
-- Un lien que tu empruntes souvent devient plus épais et plus lumineux.
+- À l'installation, chacun crée son compte : c'est un compte normal,
+  sans espace admin.
+- Le créateur de Synapse est admin. Dans l'espace admin (en haut à
+  droite) > Comptes, il peut nommer d'autres admins (« Nommer admin ») :
+  ils ont exactement les mêmes droits que lui, sauf sur son compte.
+- L'espace admin montre les personnes qui ont un compte sur CE Synapse
+  (celles qui ont ouvert ton lien, sur ton ordinateur). Quelqu'un qui
+  installe Synapse chez lui a son propre Synapse, séparé du tien.
 
-Faire essayer Synapse à un ami (il n'a RIEN à installer)
---------------------------------------------------------
-Ton PC sert de serveur : ton ami utilise Synapse dans son navigateur,
-avec son propre compte et son propre cerveau.
-1. Ouvre l'accès Internet : bouton « Partager » (ou Espace créateur >
-   Serveur) > « Depuis n'importe où » > Ouvert.
-2. Espace créateur (en haut à droite) > Inscriptions > « Inviter
-   quelqu'un sur Synapse » > Créer le lien. Envoie-le (WhatsApp, SMS…).
-   (Ou : ton prénom en haut à droite > « Inviter un ami sur Synapse ».)
-3. Ton ami ouvre le lien, choisit son prénom, son e-mail et un mot de
-   passe : il arrive dans son cerveau, avec des exemples pour découvrir.
-À savoir : ton PC doit rester allumé avec Synapse ouvert (il reste en
-arrière-plan si tu fermes la fenêtre). L'adresse gratuite change à chaque
-redémarrage de Synapse : renvoie alors la nouvelle adresse à tes amis ;
-leurs comptes et leurs cerveaux restent (ils se reconnectent).
-Pour une adresse qui ne change jamais, ou un Synapse toujours en ligne :
-lis « METTRE-EN-LIGNE.txt ».
+Rejoindre le cerveau d'un ami
+-----------------------------
+Ouvre le lien qu'il t'envoie (ou colle-le : ton prénom en haut à
+droite > « Rejoindre le cerveau d'un ami »).
 
 Sur ton téléphone
 -----------------
-Synapse marche aussi sur téléphone, dans le navigateur, sans rien
-installer. Le téléphone se connecte à ton ordinateur (allumé, avec
-l'accès « Même Wi-Fi » ou « Depuis n'importe où » ouvert).
-- Ton cerveau sur ton téléphone : sur l'ordinateur, clique sur ton
-  prénom (en haut à droite) > « Sur ton téléphone » > Afficher le QR
-  code. Vise-le avec l'appareil photo du téléphone et touche le lien :
-  tu es connecté. Le code sert une fois, 10 minutes ; ne l'envoie à
-  personne. Tout se synchronise en direct entre les deux.
-- Le cerveau de quelqu'un : chaque invitation a un bouton « QR ».
-- Dans l'autre sens : depuis le téléphone, « Partager » marche aussi.
-- Au doigt : un doigt tourne autour du réseau, pincer avance ou recule,
-  deux doigts déplacent, toucher ouvre un neurone, double toucher dans
-  le vide revient à la vue d'ensemble.
-- Astuce : menu du navigateur > « Ajouter à l'écran d'accueil ».
-
-Inviter quelqu'un dans ton cerveau
-----------------------------------
-1. Clique sur « Partager » (en haut à droite).
-2. Crée une invitation : choisis le rôle de la personne
-     lecture       : elle explore et lit, sans rien modifier
-     contribution  : elle ajoute ses pensées et les relie aux tiennes
-     édition       : elle peut tout modifier, comme toi
-   et la zone : tout le cerveau, ou seulement certains #tags.
-   Copie le lien et envoie-le.
-3. La personne ouvre le lien et entre avec son compte Synapse (elle
-   retrouve ton cerveau dans son menu, sur tous ses appareils), ou juste
-   avec un prénom, sans compte. Tu la vois apparaître en haut à droite,
-   avec ce qu'elle regarde ; clique sur son nom pour suivre sa caméra.
-   Ses pensées apparaissent chez toi en direct.
-Tes amis peuvent faire pareil avec leur propre cerveau, et toi le
-rejoindre : ton prénom en haut à droite > « Mes cerveaux » pour passer de
-l'un à l'autre.
-
-À savoir :
-- Un neurone 🔒 privé (facette dans son panneau, ou « !privé ») n'est
-  jamais montré aux invités, même avec un accès « tout le cerveau ».
-- « Partager » > Personnes : changer le rôle ou la zone, « Voir comme »
-  (le réseau tel que la personne le voit), « Retirer » (elle est
-  déconnectée tout de suite).
-- « Arrêter tout partage » ferme les accès et déconnecte tout le monde.
-- Rien n'est enregistré sur l'ordinateur de tes invités.
-
-L'espace créateur (réservé à toi, et aux admins que tu nommes)
---------------------------------------------------------------
-Bouton « Espace créateur » en haut à droite :
-- Vue d'ensemble : comptes, personnes actives (jour, 7 j, 30 j), en ligne,
-  neurones, cerveaux partagés, stockage, activité sur 30 jours, vues
-  utilisées, ce qui est capturé.
-- Personnes : chaque compte (inscription, dernière visite, appareil,
-  taille de son cerveau, assiduité) ; rôle (membre, admin, créateur),
-  suspendre, déconnecter partout, lien de nouveau mot de passe (en cas
-  d'oubli), supprimer.
-- Inscriptions : ouvertes à tous, sur invitation, ou fermées ; tes liens
-  d'invitation ; combien d'amis chaque membre peut inviter.
-- Retours : les idées et problèmes que les gens t'écrivent depuis l'appli.
-- Erreurs : les plantages techniques, chez tout le monde.
-- Journal : inscriptions, connexions, échecs, actions de l'équipe…
-- Réglages : annonce en direct à tout le monde, maintenance, limites,
-  texte de conditions et confidentialité (montré à l'inscription).
-- Serveur : accès Wi-Fi / Internet, adresse fixe, état du serveur.
-Par respect (et par la loi), l'espace créateur montre des chiffres, jamais
-le contenu des cerveaux.
-
-Le langage visuel
------------------
-  Chaque pensée est un neurone néon : un noyau lumineux et ses branches.
-  couleur néon = nature : cyan pensées · ambre actions · menthe moments
-                          · violet références (personnes, livres, liens)
-  branches     = liens : plus une pensée est reliée, plus son neurone
-                 est grand et ramifié
-  éclat        = vitalité : ce qui est récent ou en cours brille (et bat
-                 comme un cœur) ; ce qui est fini devient un néon éteint
-                 et s'éloigne du centre
-  grésillement et anneau rose-rouge = en retard
-  impulsions   = activité : des points de lumière voyagent le long des
-                 connexions. Ouvre un neurone : il en envoie à ses
-                 voisins, qui parfois répondent. Impulsions vives,
-                 calmes ou arrêtées : Ctrl+K, puis « > impulsions ».
-
-Les vues
---------
-  Réseau (Échap) · Flux (2) · Agenda (Tab) · Tâches (Maj+Tab)
-  Le Flux montre tout ce que tu as capturé, dans l'ordre, et les pensées
-  « sans lien » à rattacher quand tu en as envie.
+Ton prénom en haut à droite > « Sur ton téléphone » > « Afficher le QR
+code » : vise-le avec l'appareil photo du téléphone et touche le lien.
+Au doigt : un doigt tourne autour du réseau, pincer avance ou recule,
+deux doigts déplacent, toucher ouvre, double toucher dans le vide
+revient à la vue d'ensemble.
 
 Tes données
 -----------
-- Tout est enregistré sur cet ordinateur, dans le dossier
-  %APPDATA%\Synapse : un dossier par cerveau (cerveaux\…), les comptes
-  (comptes.json, mots de passe jamais en clair), les réglages, avec une
-  sauvegarde par jour de chaque cerveau (les 14 derniers jours).
-  Espace créateur > Serveur > « Ouvrir le dossier des données ».
-- Au premier lancement de la V4, ton cerveau devient celui de ton compte
-  créateur (l'ancienne version est gardée dans « ancien-v3 »). Ferme les
-  anciennes fenêtres Synapse avant de relancer.
-- Sur ce PC, tu es reconnu automatiquement. Pour te connecter depuis un
-  autre appareil : ton prénom en haut à droite > Profil > ajoute un e-mail
-  et un mot de passe.
-- Sauvegarde manuelle : Ctrl+K, puis « > », puis « Exporter mes données ».
-  Les exports des versions précédentes s'importent aussi.
-- Dans l'application, la touche ? affiche l'aide et tous les raccourcis.
-- Pour avoir un raccourci directement sur le Bureau : clic droit sur
-  « Lancer Synapse » > Afficher plus d'options > Envoyer vers >
-  Bureau (créer un raccourci).
-
-Le dossier « app » contient le code de l'application. Garde-le à côté de
-« Lancer Synapse » : tu peux déplacer ou renommer le dossier Synapse en
-entier, mais pas séparer les deux. Node.js doit rester installé.
+- Tout est dans %APPDATA%\Synapse : un dossier par cerveau, avec une
+  sauvegarde par jour (14 jours).
+- Ton cerveau de la version précédente est gardé tel quel, à côté du
+  nouveau : cerveau-v4.json, dans le dossier de ton cerveau.
+- Exporter : Ctrl+K, puis « Exporter mes données ».
+- Mettre Synapse en ligne pour tout le monde : lis METTRE-EN-LIGNE.txt.

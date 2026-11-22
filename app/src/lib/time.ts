@@ -61,6 +61,22 @@ export function fmtDuration(min: number): string {
   return m ? `${h}h${pad(m)}` : `${h}h`;
 }
 
+/** « 10 h 20 », « 4 h 05 », « 2 h », « 45 min » (comme un relevé d'heures) */
+export function fmtHM(min: number): string {
+  const m = Math.max(0, Math.round(min));
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  return r ? `${h} h ${pad(r)}` : `${h} h`;
+}
+
+/** Lundi de la semaine d'un jour (YYYY-MM-DD) */
+export function mondayOf(iso: string): string {
+  const d = fromISODate(iso);
+  const back = (d.getDay() + 6) % 7;
+  return addDays(iso, -back);
+}
+
 /** Duration of a slot in minutes; end <= start means it ends the next day */
 export function slotDuration(start: number, end: number): number {
   if (end === start) return 1440;
@@ -145,28 +161,6 @@ export function slotStartTs(date: string, start: number): number {
 }
 export function slotEndTs(date: string, start: number, end: number): number {
   return slotStartTs(date, start) + slotDuration(start, end) * 60000;
-}
-
-/** A `When` without a start covers the whole day; with a start but no end it lasts one hour */
-export function whenStartTs(w: { date: string; start: number | null }): number {
-  return slotStartTs(w.date, w.start ?? 0);
-}
-export function whenEndTs(w: { date: string; start: number | null; end: number | null }): number {
-  if (w.start == null) return fromISODate(addDays(w.date, 1)).getTime();
-  if (w.end == null) return slotStartTs(w.date, w.start) + 60 * 60000;
-  return slotEndTs(w.date, w.start, w.end);
-}
-
-/** "14:00 → 15:30" · "14:00" · "" (toute la journée) */
-export function fmtHours(w: { start: number | null; end: number | null }): string {
-  if (w.start == null) return '';
-  return w.end == null ? fmtTime(w.start) : `${fmtTime(w.start)} → ${fmtTime(w.end)}`;
-}
-
-/** "DEMAIN 14:00", "MAR 18 NOV", "AUJOURD'HUI 09:12 → 11:47" */
-export function fmtWhen(w: { date: string; start: number | null; end: number | null }): string {
-  const h = fmtHours(w);
-  return `${fmtDay(w.date)}${h ? ' ' + h : ''}`;
 }
 
 /** Relative "dans 1h12" / "il y a 5 min" */

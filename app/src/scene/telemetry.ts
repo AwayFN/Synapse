@@ -16,5 +16,5 @@ export const labelEls = new Map<string, HTMLElement>();
 export const reticle: { el: HTMLElement | null } = { el: null };
 /** Constellation hovered through its DOM label (takes precedence over 3D picking) */
 export const labelHover: { id: string | null } = { id: null };
-/** Étiquettes de présence (« LÉA ») : participant → élément DOM, et le neurone qu'il regarde */
+/** Étiquettes de présence (« LÉA ») : qui regarde quel neurone, placées par <PresenceProjector/> */
 export const presenceEls = new Map<string, { el: HTMLElement; focus: string | null; slot: number }>();

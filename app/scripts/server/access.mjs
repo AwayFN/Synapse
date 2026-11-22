@@ -2,8 +2,11 @@
 import path from 'node:path';
 import { initialsOf, randomToken, readJsonFile, safeEqual, sha256, writeJsonAtomic } from './util.mjs';
 
-export const ROLES = ['lecture', 'contribution', 'edition'];
-const ROLE_LABEL = { lecture: 'lecture', contribution: 'contribution', edition: 'édition', owner: 'propriétaire' };
+/** Deux façons d'inviter : « peut regarder » (lecture) ou « peut modifier » (édition) */
+export const ROLES = ['lecture', 'edition'];
+const ROLE_LABEL = { lecture: 'peut regarder', edition: 'peut modifier', owner: 'propriétaire' };
+/** anciennes invitations « contribution » : elles deviennent « peut modifier » */
+const cleanRole = (r) => (r === 'lecture' ? 'lecture' : 'edition');
 const SESSION_DAYS = 180;
 
 /** « de Léa », « d’Arthur » */
@@ -51,6 +54,12 @@ export class Access {
       sessions: d.sessions && typeof d.sessions === 'object' ? d.sessions : {},
       share: { lan: !!d.share?.lan, internet: !!d.share?.internet },
     };
+    // plus de zones ni de rôle « contribution » : chacun voit tout le cerveau, et le modifie ou le regarde
+    for (const x of [...Object.values(this.d.members), ...Object.values(this.d.invites)]) {
+      if (!x || typeof x !== 'object') continue;
+      x.role = cleanRole(x.role);
+      x.scope = { all: true, tags: [] };
+    }
     this.timer = null;
     this.pruneSessions();
   }
@@ -107,13 +116,20 @@ export class Access {
   membersDetailed() {
     return Object.values(this.d.members)
       .filter((m) => !m.revokedAt)
-      .map((m) => ({ ...this.memberPublic(m), createdAt: m.createdAt, lastSeen: m.lastSeen || null, inviteId: m.inviteId || null, accountId: m.accountId || null }));
+      .map((m) => ({
+        ...this.memberPublic(m),
+        createdAt: m.createdAt,
+        lastSeen: m.lastSeen || null,
+        inviteId: m.inviteId || null,
+        accountId: m.accountId || null,
+        // son lien personnel : il le rouvre pour revenir (autre appareil, nouvelle adresse Internet)
+        linkToken: this.backLinkOf(m),
+      }));
   }
   updateMember(id, patch) {
     const m = this.member(id);
     if (!m || id === 'owner') return null;
     if (patch.role !== undefined && ROLES.includes(patch.role)) m.role = patch.role;
-    if (patch.scope !== undefined) m.scope = cleanScope(patch.scope);
     if (patch.name !== undefined) m.name = cleanName(patch.name, m.name);
     this.save();
     return m;
@@ -143,8 +159,8 @@ export class Access {
       id,
       token: randomToken(24),
       name: cleanName(name, ''),
-      role: ROLES.includes(role) ? role : 'contribution',
-      scope: cleanScope(scope),
+      role: ROLES.includes(role) ? role : 'edition',
+      scope: cleanScope(scope && { all: true }),
       multi: !!multi,
       uses: 0,
       createdAt: Date.now(),
@@ -167,18 +183,34 @@ export class Access {
     if (!inv.multi && inv.uses >= 1) return 'used';
     return 'ok';
   }
+  /**
+   * Une invitation pour une seule personne, déjà utilisée : la personne qui l'a utilisée peut revenir avec
+   * le même lien (autre appareil, nouvelle adresse Internet après un redémarrage), tant que son accès n'est
+   * pas retiré. Seul ce lien, que le propriétaire lui a envoyé, permet de revenir à sa place.
+   */
+  backMember(inv) {
+    if (!inv || inv.multi || inv.revokedAt || inv.uses < 1) return null;
+    return Object.values(this.d.members).find((m) => m.inviteId === inv.id && !m.revokedAt) || null;
+  }
+  backLinkOf(m) {
+    const inv = m?.inviteId ? this.d.invites[m.inviteId] : null;
+    return inv && this.backMember(inv)?.id === m.id ? inv.token : null;
+  }
   inviteInfo(token) {
     const inv = this.inviteByToken(token);
     const state = this.inviteState(inv);
-    if (state !== 'ok') return { ok: false, reason: state, ownerName: this.ownerName };
+    const back = state === 'ok' ? null : this.backMember(inv);
+    if (state !== 'ok' && !back) return { ok: false, reason: state, ownerName: this.ownerName };
+    const src = back || inv;
     return {
       ok: true,
       ownerName: this.ownerName,
       brainName: this.brainName,
-      role: inv.role,
-      roleLabel: ROLE_LABEL[inv.role],
-      scope: inv.scope,
-      name: inv.name,
+      role: src.role,
+      roleLabel: ROLE_LABEL[src.role],
+      scope: src.scope,
+      name: back ? back.name : inv.name,
+      ...(back ? { back: back.accountId ? 'account' : 'guest' } : {}),
     };
   }
   invitesPublic() {
@@ -199,6 +231,17 @@ export class Access {
   join(token, name) {
     const inv = this.inviteByToken(token);
     const state = this.inviteState(inv);
+    const back = state === 'ok' ? null : this.backMember(inv);
+    if (back) {
+      // il revient : même membre (son nom, son rôle, ce qu'il a écrit), nouvelle session pour cet appareil
+      if (back.accountId) return { error: 'account' };
+      const session = randomToken(32);
+      this.d.sessions[sha256(session)] = { memberId: back.id, createdAt: Date.now() };
+      back.lastSeen = Date.now();
+      this.save();
+      this.log(`back ${back.id} (${back.role})`);
+      return { member: back, session, back: true };
+    }
     if (state !== 'ok') return { error: state };
     inv.uses++;
     const id = randomToken(8);

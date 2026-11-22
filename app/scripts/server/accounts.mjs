@@ -1,6 +1,8 @@
 // Comptes Synapse : qui peut se connecter, et avec quel rôle sur le serveur.
-//   créateur : tous les droits (c'est toi) · admin : t'aide à gérer · membre : utilise Synapse
+//   créateur : c'est toi, le premier admin · admin : exactement les mêmes droits, nommé par un admin
+//   membre : utilise Synapse, sans aucun accès à l'espace admin
 // Chaque compte a son propre cerveau ; il peut en ouvrir l'accès à d'autres et rejoindre les leurs.
+// Le compte « de ce PC » (pc: true) est reconnu automatiquement sur l'ordinateur qui fait tourner Synapse.
 // Les mots de passe ne sont jamais enregistrés : seulement une empreinte scrypt, avec un sel par compte.
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -61,6 +63,14 @@ export class Accounts {
     const d = readJsonFile(this.file) || {};
     this.d = { accounts: obj(d.accounts), sessions: obj(d.sessions), signups: obj(d.signups), resets: obj(d.resets), links: obj(d.links) };
     for (const a of Object.values(this.d.accounts)) if (!Array.isArray(a.shared)) a.shared = [];
+    // V4 → V5 : le compte de ce PC était le premier créateur
+    if (!this.list().some((a) => a.pc)) {
+      const c = this.creator();
+      if (c) {
+        c.pc = true;
+        this.save();
+      }
+    }
     /** accountId → { n, until } : tentatives de connexion ratées (en mémoire) */
     this.fails = new Map();
     this.timer = null;
@@ -109,8 +119,16 @@ export class Accounts {
   activeCreators() {
     return this.list().filter((a) => a.role === 'createur' && a.status !== 'suspendu');
   }
+  /** Les admins en activité (créateur compris) : il en faut toujours au moins un s'il y en a eu un */
+  activeStaff() {
+    return this.list().filter((a) => (a.role === 'createur' || a.role === 'admin') && a.status !== 'suspendu');
+  }
+  /** Le compte de l'ordinateur qui fait tourner Synapse (reconnu sans mot de passe sur ce PC) */
+  pcAccount() {
+    return this.list().find((a) => a.pc) || null;
+  }
 
-  create({ name, email = '', pass = null, role = 'membre', via = 'ouverte', invitedBy = null }) {
+  create({ name, email = '', pass = null, role = 'membre', via = 'ouverte', invitedBy = null, pc = false }) {
     const a = {
       id: randomToken(9),
       name: cleanName(name, ''),
@@ -125,6 +143,7 @@ export class Accounts {
       createdAt: Date.now(),
       lastSeen: Date.now(),
       stats: null,
+      ...(pc ? { pc: true } : {}),
     };
     this.d.accounts[a.id] = a;
     this.save();

@@ -2,11 +2,11 @@
 ===============================
 
 Trois façons, de la plus simple à la plus solide. Dans tous les cas, c'est
-le même Synapse : comptes, cerveaux, invitations, espace créateur.
+le même Synapse : comptes, cerveaux, invitations, espace admin.
 
 1. Depuis ton PC, adresse gratuite (pour commencer, entre amis)
 --------------------------------------------------------------
-- Espace créateur > Serveur > « Depuis n'importe où » > Ouvert.
+- Espace admin > Serveur > « Depuis n'importe où » > Ouvert.
 - Rien à acheter, rien à régler. Mais : ton PC doit rester allumé, et
   l'adresse (…trycloudflare.com) change à chaque redémarrage de Synapse.
 - Cloudflare réserve ces adresses gratuites aux essais (pas pour un vrai
@@ -23,7 +23,7 @@ Il te faut : un compte Cloudflare (gratuit) et un nom de domaine
    Tu n'as rien à installer : Synapse a déjà l'outil.
 3. Onglet « Public hostname » : sous-domaine « synapse », ton domaine,
    service HTTP, adresse localhost:5173.
-4. Dans Synapse : Espace créateur > Serveur > Adresse fixe : colle
+4. Dans Synapse : Espace admin > Serveur > Adresse fixe : colle
    l'adresse (https://synapse.ton-domaine.fr) et le jeton, Enregistrer.
    Puis ferme et rouvre l'accès Internet.
 Ton PC doit toujours rester allumé, mais l'adresse ne change plus.
@@ -68,8 +68,8 @@ Avant d'ouvrir à tout le monde : la liste
 -----------------------------------------
 [ ] Ton compte créateur a un e-mail et un mot de passe solide.
 [ ] Inscriptions « sur invitation » au début, « ouvertes » ensuite
-    (Espace créateur > Inscriptions). Limite de comptes si tu veux.
-[ ] Relis le texte « Conditions & confidentialité » (Espace créateur >
+    (Espace admin > Inscriptions). Limite de comptes si tu veux.
+[ ] Relis le texte « Conditions & confidentialité » (Espace admin >
     Réglages) : en France et en Europe (RGPD), tu es responsable des
     données de tes utilisateurs. Indique comment te contacter, ce que tu
     gardes (nom, e-mail, dates), pourquoi, et combien de temps. Chacun
@@ -78,7 +78,7 @@ Avant d'ouvrir à tout le monde : la liste
 [ ] Tu sais publier une annonce et passer en maintenance (Réglages).
 [ ] Tu as nommé un admin pour t'aider si besoin (Personnes > rôle).
 
-Ce que l'espace créateur montre, et ne montre pas
+Ce que l'espace admin montre, et ne montre pas
 -------------------------------------------------
 Il montre des chiffres et des métadonnées : comptes, dates d'inscription
 et de connexion, appareil, nombre de neurones et de liens, vues utilisées,

@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../sync/client';
 import { linkBases, ROLE_HINT, ROLE_LABEL, useSession, type Invite, type MemberDetail, type Role, type Scope, type ShareStatus } from '../sync/session';
 import { fmtRelative } from '../lib/time';
-import { ALERT_HEX } from '../lib/kinds';
+import { ALERT_HEX } from '../lib/color';
 import { Corners, cvar, Kbd } from './common';
 import { QrCode } from './Qr';
 import { useAllTags } from './TagBar';
+import { ReachButton, ShareSheetButton } from './Reach';
 
 type GuestRole = Exclude<Role, 'owner'>;
-const ROLES: GuestRole[] = ['lecture', 'contribution', 'edition'];
+const ROLES: GuestRole[] = ['edition', 'lecture'];
 const TTLS: { h: number; label: string }[] = [
   { h: 24, label: '24 h' },
   { h: 24 * 7, label: '7 jours' },
@@ -60,11 +61,13 @@ function CopyButton({ text, label = 'Copier' }: { text: string; label?: string }
   );
 }
 
-function LinkRow({ base, token, name }: { base: { label: string; url: string }; token: string; name?: string }) {
+function LinkRow({ base, token, name, back }: { base: { label: string; url: string }; token: string; name?: string; back?: boolean }) {
   const link = `${base.url}/#invite=${token}`;
   const owner = useSession((s) => s.ownerName);
   const [qr, setQr] = useState(false);
-  const message = `${name ? `${name}, ` : ''}rejoins mon second cerveau Synapse : ${link}\n— ${owner}`;
+  const message = back
+    ? `${name ? `${name}, ` : ''}voici ton lien pour revenir dans mon cerveau Synapse (mon adresse a changé) : ${link}\n— ${owner}`
+    : `${name ? `${name}, ` : ''}rejoins mon second cerveau Synapse : ${link}\nRien à installer, ça s’ouvre dans le navigateur (ordinateur ou téléphone).\n— ${owner}`;
   return (
     <div className="flex flex-col gap-2 min-w-0">
       <div className="flex items-center gap-2 min-w-0 flex-wrap">
@@ -72,6 +75,7 @@ function LinkRow({ base, token, name }: { base: { label: string; url: string }; 
         <input readOnly value={link} className="field field-mono !text-[11px] !py-1.5 flex-1 min-w-[160px]" onFocus={(e) => e.currentTarget.select()} />
         <CopyButton text={link} label="Copier le lien" />
         <CopyButton text={message} label="Copier un message" />
+        <ShareSheetButton text={message} />
         <button className={`btn !py-1 !px-2 !text-[9.5px] flex-none ${qr ? '!text-white' : ''}`} title="Pour un téléphone : viser le code avec l'appareil photo" onClick={() => setQr((x) => !x)}>
           QR
         </button>
@@ -88,53 +92,14 @@ function LinkRow({ base, token, name }: { base: { label: string; url: string }; 
   );
 }
 
-function ScopePicker({ value, onChange }: { value: Scope; onChange: (s: Scope) => void }) {
-  const tags = useAllTags();
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="seg w-fit">
-        <button data-on={value.all ? '1' : '0'} onClick={() => onChange({ all: true, tags: [] })}>
-          Tout le cerveau
-        </button>
-        <button data-on={!value.all ? '1' : '0'} onClick={() => onChange({ all: false, tags: value.tags.length ? value.tags : tags.slice(0, 1).map(([t]) => t) })}>
-          Seulement des tags
-        </button>
-      </div>
-      {!value.all && (
-        <div className="flex flex-wrap gap-1.5">
-          {tags.length === 0 && <span className="text-[12px] text-white/40">Aucun tag pour l’instant : ajoute des #tags à tes neurones.</span>}
-          {tags.map(([t, n]) => {
-            const on = value.tags.includes(t);
-            return (
-              <button
-                key={t}
-                className="chip"
-                data-on={on ? '1' : '0'}
-                onClick={() => {
-                  const next = on ? value.tags.filter((x) => x !== t) : [...value.tags, t];
-                  onChange(next.length ? { all: false, tags: next } : { all: true, tags: [] });
-                }}
-              >
-                #{t} <span className="opacity-45">{n}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-      <div className="text-[11px] text-white/38">
-        Les neurones marqués 🔒 privés ne sont jamais partagés.{!value.all && ' Ce que l’invité capture reçoit automatiquement un de ces tags.'}
-      </div>
-    </div>
-  );
-}
-
+/** Le choix demandé pour chaque invité : il peut modifier, ou seulement regarder */
 function RoleSeg({ value, onChange }: { value: GuestRole; onChange: (r: GuestRole) => void }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="seg w-fit">
+      <div className="seg w-fit" data-role-choice>
         {ROLES.map((r) => (
-          <button key={r} data-on={value === r ? '1' : '0'} onClick={() => onChange(r)}>
-            {ROLE_LABEL[r]}
+          <button key={r} data-on={value === r ? '1' : '0'} style={cvar(r === 'edition' ? '#39ff88' : '#00e5ff')} onClick={() => onChange(r)}>
+            {r === 'edition' ? '✎ Peut modifier' : '◉ Peut seulement regarder'}
           </button>
         ))}
       </div>
@@ -143,7 +108,7 @@ function RoleSeg({ value, onChange }: { value: GuestRole; onChange: (r: GuestRol
   );
 }
 
-/** Ouvrir le serveur aux autres : même Wi-Fi, ou Internet (aussi dans l'espace créateur) */
+/** Ouvrir le serveur aux autres : même Wi-Fi, ou Internet (aussi dans l'espace admin) */
 export function AccessCards({ s }: { s: ShareStatus }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [consent, setConsent] = useState(false);
@@ -158,7 +123,7 @@ export function AccessCards({ s }: { s: ShareStatus }) {
     setBusy(null);
   };
   return (
-    <div className="grid grid-cols-2 gap-3">
+    <div className="grid grid-cols-2 max-md:grid-cols-1 gap-3">
       <div className="glass p-4 flex flex-col gap-2.5">
         <div className="flex items-center justify-between gap-2">
           <span className="hud text-[10.5px] text-white/85">Même Wi-Fi</span>
@@ -183,6 +148,10 @@ export function AccessCards({ s }: { s: ShareStatus }) {
             </button>
           ) : net.state === 'starting' || net.state === 'downloading' ? (
             <span className="mono text-[9.5px] text-white/55 breathe">{net.state === 'downloading' ? `TÉLÉCHARGEMENT ${net.progress} %` : 'OUVERTURE…'}</span>
+          ) : net.retrying ? (
+            <button className="facet breathe" data-on="1" title="Coupure : Synapse réessaie tout seul. Clique pour fermer l’accès." onClick={() => run('net', '/api/share/internet', { on: false })}>
+              ◌ Reconnexion…
+            </button>
           ) : (
             <button
               className="facet"
@@ -196,7 +165,7 @@ export function AccessCards({ s }: { s: ShareStatus }) {
         </div>
         <div className="text-[11.5px] text-white/48 leading-relaxed">
           {net.fixed
-            ? 'Ton adresse fixe, par ton tunnel Cloudflare (réglée dans l’espace créateur, onglet Serveur).'
+            ? 'Ton adresse fixe, par ton tunnel Cloudflare (réglée dans l’espace admin, onglet Serveur).'
             : 'Une adresse sécurisée (https) créée par Cloudflare, sans compte ni réglage de box. Les échanges passent chiffrés par Cloudflare. L’adresse change à chaque redémarrage de Synapse : renvoie alors le nouveau lien (les accès et les comptes restent valables).'}
         </div>
         {!net.toolReady && net.state !== 'on' && (
@@ -215,96 +184,98 @@ export function AccessCards({ s }: { s: ShareStatus }) {
   );
 }
 
-function InviteForm({ s }: { s: ShareStatus }) {
+function InviteForm({ s, manage }: { s: ShareStatus; manage: boolean }) {
   const [name, setName] = useState('');
-  const [role, setRole] = useState<GuestRole>('contribution');
-  const [scope, setScope] = useState<Scope>({ all: true, tags: [] });
+  const [role, setRole] = useState<GuestRole>('edition');
   const [ttl, setTtl] = useState(24 * 7);
   const [multi, setMulti] = useState(false);
+  const [options, setOptions] = useState(false);
   const [created, setCreated] = useState<{ token: string; name: string } | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const b = bases(s);
+  const create = async () => {
+    setError(null);
+    try {
+      const r = await api<{ invite: { token: string } } & ShareStatus>('/api/invites', { name, role, ttlHours: ttl, multi });
+      useSession.setState({ share: r });
+      setCreated({ token: r.invite.token, name });
+    } catch {
+      setError('Le lien n’a pas pu être créé. Réessaie.');
+    }
+  };
+  const ttlLabel = TTLS.find((x) => x.h === ttl)?.label ?? '';
   return (
-    <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-[110px_1fr] gap-x-4 gap-y-4 items-start">
-        <span className="xs-label pt-2">Pour qui</span>
-        <input className="field !w-[260px]" placeholder="Prénom (facultatif)" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} />
-        <span className="xs-label pt-2">Rôle</span>
+    <div className="flex flex-col gap-3.5">
+      <label className="flex flex-col gap-1.5 w-fit max-w-full">
+        <span className="xs-label">Pour qui (facultatif)</span>
+        <input className="field !w-[260px] max-w-full" placeholder="Son prénom" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} />
+      </label>
+      <div className="flex flex-col gap-1.5">
+        <span className="xs-label">Ce qu’il peut faire</span>
         <RoleSeg value={role} onChange={setRole} />
-        <span className="xs-label pt-2">Zone</span>
-        <ScopePicker value={scope} onChange={setScope} />
-        <span className="xs-label pt-2">Validité</span>
-        <div className="flex flex-col gap-2">
-          <div className="seg w-fit">
-            {TTLS.map((x) => (
-              <button key={x.h} data-on={ttl === x.h ? '1' : '0'} onClick={() => setTtl(x.h)}>
-                {x.label}
-              </button>
-            ))}
-          </div>
-          <label className="flex items-center gap-2 text-[12px] text-white/60 cursor-pointer">
-            <input type="checkbox" checked={multi} onChange={(e) => setMulti(e.target.checked)} />
-            Lien utilisable par plusieurs personnes (sinon : une seule)
-          </label>
-        </div>
       </div>
-      <div className="flex items-center gap-3">
-        <button
-          className="btn btn-primary"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            try {
-              const r = await api<{ invite: { token: string } } & ShareStatus>('/api/invites', { name, role, scope, ttlHours: ttl, multi });
-              useSession.setState({ share: r });
-              setCreated({ token: r.invite.token, name });
-            } catch {
-              /* rien */
-            }
-            setBusy(false);
-          }}
-        >
-          Créer le lien d’invitation
+      <div className="text-[11.5px] text-white/45 leading-relaxed">
+        Lien valable {ttl ? ttlLabel : 'sans limite'} · {multi ? 'plusieurs personnes' : 'une personne'}.{' '}
+        <button className="underline decoration-white/25 hover:text-white/80" onClick={() => setOptions((x) => !x)}>
+          {options ? 'Masquer' : 'Changer'}
         </button>
-        {!b.length && <span className="text-[11.5px] text-[rgb(var(--alert))]">Ouvre d’abord un accès ci-dessus (Internet, ou Wi-Fi) pour que le lien fonctionne chez les autres.</span>}
-        {b.length > 0 && !s.ownerNameSet && <span className="text-[11.5px] text-white/45">Astuce : indique ton prénom tout en haut, tes invités le verront.</span>}
       </div>
+      {options && (
+        <div className="grid grid-cols-[90px_1fr] max-md:grid-cols-1 gap-x-4 gap-y-4 items-start glass p-4 anim-pop">
+          <span className="xs-label pt-2">Validité</span>
+          <div className="flex flex-col gap-2">
+            <div className="seg w-fit flex-wrap">
+              {TTLS.map((x) => (
+                <button key={x.h} data-on={ttl === x.h ? '1' : '0'} onClick={() => setTtl(x.h)}>
+                  {x.label}
+                </button>
+              ))}
+            </div>
+            <label className="flex items-center gap-2 text-[12px] text-white/60 cursor-pointer">
+              <input type="checkbox" checked={multi} onChange={(e) => setMulti(e.target.checked)} />
+              Lien utilisable par plusieurs personnes (sinon : une seule)
+            </label>
+          </div>
+        </div>
+      )}
+      <ReachButton label="Créer le lien d’invitation" kind={manage ? 'internet' : 'any'} lanChoice={manage} onReady={create} />
+      {error && <div className="text-[12px] text-[rgb(var(--alert))]">{error}</div>}
       {created && (
-        <div className="glass p-3 flex flex-col gap-2 anim-pop">
+        <div className="glass p-3 flex flex-col gap-2 anim-pop" data-invite-ready>
           <div className="hud text-[9.5px] text-white/70">Lien prêt · envoie-le{created.name ? ` à ${created.name}` : ''} (SMS, WhatsApp, e-mail…)</div>
-          {b.length ? b.map((x) => <LinkRow key={x.url} base={x} token={created.token} name={created.name} />) : <div className="text-[12px] text-white/45">Ouvre un accès pour obtenir l’adresse du lien.</div>}
+          {b.length ? (
+            b.map((x) => <LinkRow key={x.url} base={x} token={created.token} name={created.name} />)
+          ) : (
+            <div className="text-[12px] text-white/45">Ouvre un accès (plus bas) pour obtenir l’adresse du lien.</div>
+          )}
+          {!multi && <div className="text-[11px] text-white/38">Ce lien est pour une seule personne : elle pourra le rouvrir pour revenir, même depuis un autre appareil.</div>}
         </div>
       )}
     </div>
   );
 }
 
-function scopeLabel(sc?: Scope) {
-  return !sc || sc.all ? 'tout' : sc.tags.map((t) => `#${t}`).join(' ');
-}
-
-function MemberRow({ m, online }: { m: MemberDetail; online: boolean }) {
-  const [editScope, setEditScope] = useState(false);
-  const previewAs = useSession((s) => s.previewAs);
+function MemberRow({ m, online, s }: { m: MemberDetail; online: boolean; s: ShareStatus }) {
+  const [showLink, setShowLink] = useState(false);
+  const b = bases(s);
   return (
     <div className="py-2.5 border-b border-white/[0.05] last:border-0">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <span className={`w-7 h-7 rounded-full border flex items-center justify-center mono text-[9.5px] flex-none ${online ? 'border-white/60 text-white' : 'border-white/15 text-white/45'}`}>
           {m.initials}
         </span>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-[150px] flex-1">
           <div className="text-[13px] text-white/85 truncate">
             {m.name}
             {m.account && <span className="mono text-[9px] text-white/40 ml-2">COMPTE SYNAPSE</span>}
             {online && <span className="mono text-[9px] text-white/50 ml-2">● EN LIGNE</span>}
           </div>
-          <div className="mono text-[9.5px] tracking-[0.08em] text-white/35">
-            ZONE {scopeLabel(m.scope).toUpperCase()} · {m.lastSeen ? `VU ${fmtRelative(m.lastSeen - Date.now()).toUpperCase()}` : 'JAMAIS VU'}
-          </div>
+          <div className="mono text-[9.5px] tracking-[0.08em] text-white/35">{m.lastSeen ? `VU ${fmtRelative(m.lastSeen - Date.now()).toUpperCase()}` : 'JAMAIS VU'}</div>
         </div>
         <select
-          className="field !w-[130px] !py-1 !text-[11.5px]"
+          className="field !w-[150px] !py-1 !text-[11.5px]"
           value={m.role}
+          title="Ce qu’il peut faire dans ton cerveau"
           onChange={(e) => void post('/api/members/update', { id: m.id, role: e.target.value })}
         >
           {ROLES.map((r) => (
@@ -313,16 +284,15 @@ function MemberRow({ m, online }: { m: MemberDetail; online: boolean }) {
             </option>
           ))}
         </select>
-        <button className="btn btn-ghost !px-2 !text-[9.5px]" onClick={() => setEditScope((x) => !x)}>
-          Zone
-        </button>
-        <button
-          className={`btn btn-ghost !px-2 !text-[9.5px] ${previewAs === m.id ? '!text-white' : ''}`}
-          title="Le réseau n'affiche plus que ce que cette personne voit"
-          onClick={() => useSession.setState({ previewAs: previewAs === m.id ? null : m.id, shareOpen: false })}
-        >
-          Voir comme
-        </button>
+        {m.link && (
+          <button
+            className={`btn btn-ghost !px-2 !text-[9.5px] ${showLink ? '!text-white' : ''}`}
+            title="Son lien pour revenir (autre appareil, ou après un changement de ton adresse Internet)"
+            onClick={() => setShowLink((x) => !x)}
+          >
+            Lien
+          </button>
+        )}
         <button
           className="btn btn-danger btn-ghost !px-2 !text-[9.5px]"
           onClick={() => {
@@ -332,9 +302,14 @@ function MemberRow({ m, online }: { m: MemberDetail; online: boolean }) {
           Retirer
         </button>
       </div>
-      {editScope && (
-        <div className="pl-10 pt-3">
-          <ScopePicker value={m.scope ?? { all: true, tags: [] }} onChange={(sc) => void post('/api/members/update', { id: m.id, scope: sc })} />
+      {showLink && m.link && (
+        <div className="pl-10 max-md:pl-0 pt-3 flex flex-col gap-1.5 anim-pop">
+          <div className="text-[11px] text-white/45">
+            {m.account
+              ? `${m.name} rouvre ce lien puis se connecte avec son compte Synapse.`
+              : `${m.name} rouvre ce lien pour revenir à sa place (sur un autre appareil, ou quand ton adresse Internet a changé).`}
+          </div>
+          {b.length ? b.map((x) => <LinkRow key={x.url} base={x} token={m.link!} name={m.name} back />) : <span className="text-[11.5px] text-white/40">Ouvre un accès pour obtenir l’adresse du lien.</span>}
         </div>
       )}
     </div>
@@ -348,7 +323,7 @@ function InviteRow({ inv, s }: { inv: Invite; s: ShareStatus }) {
     <div className="py-2 border-b border-white/[0.05] last:border-0">
       <div className="flex items-center gap-3">
         <span className="mono text-[11px] text-white/70 flex-1 truncate">
-          {inv.name || 'Sans nom'} · {ROLE_LABEL[inv.role]} · zone {scopeLabel(inv.scope)} · {inv.multi ? `${inv.uses} utilisation${inv.uses > 1 ? 's' : ''}` : 'usage unique'} ·{' '}
+          {inv.name || 'Sans nom'} · {ROLE_LABEL[inv.role]} · {inv.multi ? `${inv.uses} utilisation${inv.uses > 1 ? 's' : ''}` : 'usage unique'} ·{' '}
           {inv.expiresAt ? `expire ${fmtRelative(inv.expiresAt - Date.now())}` : 'sans limite'}
         </span>
         <button className="btn btn-ghost !px-2 !text-[9.5px]" onClick={() => setOpen((x) => !x)}>
@@ -359,6 +334,25 @@ function InviteRow({ inv, s }: { inv: Invite; s: ShareStatus }) {
         </button>
       </div>
       {open && <div className="pt-2 flex flex-col gap-1.5">{b.length ? b.map((x) => <LinkRow key={x.url} base={x} token={inv.token} name={inv.name} />) : <span className="text-[11.5px] text-white/40">Aucun accès ouvert.</span>}</div>}
+    </div>
+  );
+}
+
+/** L'adresse Internet gratuite a changé depuis le dernier démarrage : les anciens liens ne marchent plus */
+export function addressChanged(s: ShareStatus | null): boolean {
+  const n = s?.internet;
+  return !!n && n.state === 'on' && !n.fixed && !!n.previous && !!n.url && n.previous !== n.url;
+}
+
+function AddressChanged({ s }: { s: ShareStatus }) {
+  if (!addressChanged(s) || (!s.members.length && !s.invites.length)) return null;
+  return (
+    <div className="mt-6 glass p-4 flex flex-col gap-1.5 border-[rgb(var(--alert)/0.35)]" data-address-changed>
+      <div className="hud text-[10px] text-[rgb(var(--alert))]">Ton adresse Internet a changé</div>
+      <div className="text-[12px] text-white/60 leading-relaxed">
+        Synapse a redémarré : la nouvelle adresse est <span className="mono text-white/80 break-all">{s.internet.url}</span>. Les anciens liens ne marchent plus.
+        Renvoie à chacun son lien : bouton <span className="text-white/80">Lien</span> à côté de son nom ci-dessous (il revient à sa place, rien n’est perdu).
+      </div>
     </div>
   );
 }
@@ -399,7 +393,7 @@ function Dialog() {
           <div className="mono text-[11px] text-white/40 mt-8">Chargement…</div>
         ) : (
           <>
-            <div className="mt-6 grid grid-cols-2 gap-4">
+            <div className="mt-6 grid grid-cols-2 max-md:grid-cols-1 gap-4">
               <label className="flex flex-col gap-1.5">
                 <span className="xs-label">Ton prénom (vu par tes invités)</span>
                 <input
@@ -423,25 +417,16 @@ function Dialog() {
               </label>
             </div>
 
-            {manage && (
-              <>
-                <div className="xs-label mt-7 mb-3">1 · Comment te rejoindre</div>
-                <AccessCards s={s} />
-                <div className="text-[11px] text-white/35 mt-2">
-                  Tant qu’un accès est ouvert, Synapse reste allumé en arrière-plan même si tu fermes la fenêtre (il s’arrête après 6 h sans personne). Ton
-                  ordinateur doit rester allumé et connecté. Tes invités n’ont rien à installer : un navigateur suffit.
-                </div>
-              </>
-            )}
+            {manage && <AddressChanged s={s} />}
 
-            <div className="xs-label mt-7 mb-3">{manage ? '2 · ' : ''}Inviter quelqu’un dans ton cerveau</div>
-            <InviteForm s={s} />
+            <div className="xs-label mt-7 mb-3">Inviter quelqu’un dans ton cerveau</div>
+            <InviteForm s={s} manage={manage} />
 
             <div className="xs-label mt-7 mb-1">Personnes · {s.members.length}</div>
             {s.members.length === 0 ? (
-              <div className="text-[12px] text-white/38 py-2">Personne pour l’instant.</div>
+              <div className="text-[12px] text-white/38 py-2">Personne pour l’instant : crée un lien ci-dessus et envoie-le.</div>
             ) : (
-              s.members.map((m) => <MemberRow key={m.id} m={m} online={onlineIds.has(m.id)} />)
+              s.members.map((m) => <MemberRow key={m.id} m={m} s={s} online={onlineIds.has(m.id)} />)
             )}
 
             {s.invites.length > 0 && (
@@ -450,6 +435,18 @@ function Dialog() {
                 {s.invites.map((inv) => (
                   <InviteRow key={inv.id} inv={inv} s={s} />
                 ))}
+              </>
+            )}
+
+            {manage && (
+              <>
+                <div className="xs-label mt-8 mb-3">Comment on te rejoint</div>
+                <AccessCards s={s} />
+                <div className="text-[11px] text-white/35 mt-2 leading-relaxed">
+                  Tant qu’un accès est ouvert, Synapse reste allumé en arrière-plan, même fenêtre fermée, jusqu’à ce que tu éteignes l’ordinateur ou que tu cliques
+                  « Arrêter tout partage » : tes amis peuvent venir quand ils veulent. Tes invités n’ont rien à installer, un navigateur suffit (ordinateur ou
+                  téléphone).
+                </div>
               </>
             )}
 

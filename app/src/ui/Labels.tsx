@@ -1,27 +1,66 @@
-import { memo, useCallback } from 'react';
-import { displayTitle, useData } from '../store/data';
-import { toggleLink, useUI } from '../store/ui';
-import { degreeOf, progressOf } from '../store/graph';
+import { memo, useCallback, type CSSProperties } from 'react';
+import { displayTitle, useData, type DataState } from '../store/data';
+import { useUI } from '../store/ui';
 import { useStructure } from '../scene/structure';
 import { labelEls, labelHover, reticle } from '../scene/telemetry';
-import { isHubKind, kindLabel, natureOf, NATURES } from '../lib/kinds';
-import { isLate, kindTag, lifeState, metaLine } from '../lib/entity';
-import { excerpt } from '../lib/text';
-import { natureVar } from './common';
-import { memberName, useSession } from '../sync/session';
+import { rgbTriplet } from '../lib/color';
+import { shortCode } from '../lib/random';
+import { excerpt, wordCount } from '../lib/text';
+import { fmtDateNum, fmtDay, fmtTime } from '../lib/time';
+import { TASK_STATUS_LABEL, TYPE_LABEL, type EntityType } from '../types';
+
+export const TYPE_TAG: Record<EntityType, string> = { project: 'PRJ', task: 'TSK', note: 'NOTE', slot: 'SLOT' };
+
+function subline(s: DataState, id: string): string {
+  const e = s.entities[id];
+  if (!e) return '';
+  switch (e.type) {
+    case 'project': {
+      let total = 0;
+      let done = 0;
+      for (const x of Object.values(s.entities)) {
+        if (x.type === 'task' && x.projectId === id) {
+          total++;
+          if (x.status === 'done') done++;
+        }
+      }
+      const st = e.status === 'done' ? 'terminé' : 'en cours';
+      return `${done}/${total} tâches · ${st}${e.deadline ? ` · ⟶ ${fmtDateNum(e.deadline)}` : ''}`;
+    }
+    case 'task': {
+      const parts: string[] = [TASK_STATUS_LABEL[e.status]];
+      if (e.projectId && s.entities[e.projectId]) parts.push(`↳ ${displayTitle(s.entities[e.projectId])}`);
+      if (e.date) parts.push(`${fmtDay(e.date)}${e.time != null ? ' ' + fmtTime(e.time) : ''}`);
+      return parts.join(' · ');
+    }
+    case 'note':
+      return e.tags.length ? e.tags.map((t) => `#${t}`).join(' ') : `${wordCount(e.content)} mots`;
+    case 'slot':
+      return `${fmtTime(e.start)} → ${fmtTime(e.end)} · ${fmtDay(e.date)}`;
+  }
+}
+
+function cardText(s: DataState, id: string): string {
+  const e = s.entities[id];
+  if (!e) return '';
+  if (e.type === 'note') return excerpt(e.content, 140);
+  return excerpt(e.description, 140);
+}
+
+function linkCount(s: DataState, id: string): number {
+  let n = 0;
+  for (const l of s.links) if (l.a === id || l.b === id) n++;
+  const e = s.entities[id];
+  if (e?.type === 'task' && e.projectId) n++;
+  if (e?.type === 'project') for (const x of Object.values(s.entities)) if (x.type === 'task' && x.projectId === id) n++;
+  return n;
+}
 
 const Label = memo(function Label({ id }: { id: string }) {
   const e = useData((s) => s.entities[id]);
-  const kinds = useData((s) => s.kinds);
-  const degree = useData((s) => degreeOf(s.links, id));
-  const progress = useData((s) => {
-    const x = s.entities[id];
-    if (!x || !isHubKind(x.kind)) return '';
-    const [d, t] = progressOf(s.entities, s.links, id);
-    return `${d}/${t}`;
-  });
-  const shared = useSession((s) => s.mode !== 'local');
-  const canLink = useSession((s) => s.role !== 'lecture');
+  const sub = useData((s) => subline(s, id));
+  const text = useData((s) => cardText(s, id));
+  const links = useData((s) => linkCount(s, id));
   const ref = useCallback(
     (el: HTMLDivElement | null) => {
       if (el) labelEls.set(id, el);
@@ -30,20 +69,9 @@ const Label = memo(function Label({ id }: { id: string }) {
     [id],
   );
   if (!e) return null;
-  const nature = natureOf(e, kinds);
-  const [d, t] = progress ? progress.split('/').map(Number) : [0, 0];
-  const meta = metaLine(e, { progress: t ? [d, t] : undefined });
-  const late = isLate(e);
-  const text = excerpt(e.body, 150);
+  const done = (e.type === 'task' || e.type === 'project') && e.status === 'done';
   return (
-    <div
-      ref={ref}
-      className="lbl"
-      data-label
-      data-state={lifeState(e)}
-      data-strike={e.status === 'done' ? '1' : '0'}
-      style={natureVar(nature)}
-    >
+    <div ref={ref} className={`lbl${done ? ' is-done' : ''}`} data-label style={{ '--c': rgbTriplet(e.color) } as CSSProperties}>
       <i className="lbl-tick" />
       <div className="lbl-body">
         <div
@@ -52,34 +80,26 @@ const Label = memo(function Label({ id }: { id: string }) {
           onPointerLeave={() => {
             if (labelHover.id === id) labelHover.id = null;
           }}
-          onClick={(ev) => {
+          onClick={() => {
             labelHover.id = null;
-            const ui = useUI.getState();
-            if (ev.shiftKey && ui.selectedId && ui.selectedId !== id) toggleLink(ui.selectedId, id);
-            else ui.openEntity(id);
+            useUI.getState().openEntity(id);
           }}
         >
-          {e.pinned && <span className="text-[9px] opacity-60">★</span>}
-          {e.private && <span className="text-[9px] opacity-70" title="Privé : jamais montré aux invités">🔒</span>}
-          <span className="lbl-name truncate max-w-[260px]">{displayTitle(e)}</span>
+          <span className="lbl-type">{TYPE_TAG[e.type]}</span>
+          {done && <span className="lbl-check">✓</span>}
+          {displayTitle(e)}
         </div>
-        <div className="lbl-sub">
-          <span className="lbl-kind">{kindTag(e)}</span>
-          {meta && <> · {meta}</>}
-          {late && <span className="lbl-alert"> · en retard</span>}
-        </div>
+        <div className="lbl-sub">{sub}</div>
         <div className="lbl-card">
           <div className="lbl-card-head">
             <span>
-              {NATURES[nature].label} · {kindLabel(e.kind)}
+              {TYPE_LABEL[e.type]} · {shortCode(id)}
             </span>
-            <span>⟷ {degree}</span>
+            <span>⟷ {links}</span>
           </div>
           <div className="lbl-card-title">{displayTitle(e)}</div>
           {text && <div className="lbl-card-text">{text}</div>}
-          <div className="lbl-card-foot">
-            {shared && `par ${memberName(e.createdBy)} · `}clic → ouvrir{canLink ? ' · maj+clic → relier' : ''}
-          </div>
+          <div className="lbl-card-foot">clic → ouvrir</div>
         </div>
       </div>
     </div>

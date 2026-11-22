@@ -41,11 +41,14 @@ import {
   safeEqual,
 } from './util.mjs';
 
-export const PROTO = 4;
+export const PROTO = 5;
 const ACCOUNT_COOKIE = 'synapse_a';
 const LOCAL_NAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
-/** Avec un accès ouvert, le serveur reste allumé ; il s'arrête après 6 h sans aucune fenêtre ouverte */
-const SHARE_IDLE_MS = Number(process.env.SYNAPSE_SHARE_IDLE_MS) || 6 * 3600_000;
+/**
+ * Avec un accès ouvert, le serveur reste allumé (tes amis peuvent venir à tout moment) jusqu'à « Arrêter tout
+ * partage » ou l'arrêt de l'ordinateur. SYNAPSE_SHARE_IDLE_MS > 0 : arrêt après ce délai sans aucune fenêtre.
+ */
+const SHARE_IDLE_MS = Number(process.env.SYNAPSE_SHARE_IDLE_MS) || 0;
 const DAY = 86400_000;
 
 const MIME = {
@@ -69,37 +72,8 @@ const MIME = {
   '.wasm': 'application/wasm',
 };
 
-/** Nature d'un neurone (pour les statistiques : seulement la grande famille, jamais le contenu) */
-const NATURE_OF = {
-  tache: 'action',
-  projet: 'action',
-  objectif: 'action',
-  habitude: 'action',
-  creneau: 'temps',
-  'rendez-vous': 'temps',
-  rdv: 'temps',
-  evenement: 'temps',
-  reunion: 'temps',
-  rappel: 'temps',
-  personne: 'monde',
-  livre: 'monde',
-  article: 'monde',
-  film: 'monde',
-  podcast: 'monde',
-  lien: 'monde',
-  ressource: 'monde',
-  lieu: 'monde',
-};
-const kindKey = (k) =>
-  String(k || '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .trim();
-const natureOf = (e, kinds) => {
-  const k = kindKey(e?.kind);
-  return kinds?.[k]?.nature || kinds?.[e?.kind]?.nature || NATURE_OF[k] || 'pensee';
-};
+/** Grande famille d'un élément (pour les statistiques de l'espace admin : jamais le contenu) */
+const NATURE_OF_TYPE = { project: 'action', task: 'action', note: 'pensee', slot: 'temps' };
 
 const LIMITS = { '/api/import': 80_000_000, '/api/ops': 6_000_000, '/api/layout': 10_000_000 };
 
@@ -126,10 +100,13 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
   const publicUrl = () => cleanUrl(process.env.SYNAPSE_URL_PUBLIQUE || '') || settings.d.publicUrl || '';
 
   // ───────────────────────── V3 → V4 : le cerveau unique devient celui du compte créateur
+  // (Une nouvelle installation, elle, ne crée aucun compte : la personne crée le sien au premier lancement,
+  // un compte normal, sans espace admin.)
   function migrateV3() {
     if (hosted || accounts.count() > 0) return;
+    if (!fs.existsSync(path.join(root, 'cerveau.json')) && !fs.existsSync(path.join(root, 'acces.json'))) return;
     const legacy = readJsonFile(path.join(root, 'acces.json')) || {};
-    const a = accounts.create({ name: legacy.ownerName || '', role: 'createur', via: 'local' });
+    const a = accounts.create({ name: legacy.ownerName || '', role: 'createur', via: 'local', pc: true });
     const dir = path.join(root, 'cerveaux', a.brainId);
     fs.mkdirSync(dir, { recursive: true });
     const old = path.join(root, 'ancien-v3');
@@ -220,18 +197,20 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
   }
   const brainCard = (e, role) => ({ id: e.id, name: e.access.brainName, ownerName: e.access.ownerName, role, mine: role === 'owner' });
 
-  // ───────────────────────── partage (PC du créateur seulement)
+  // ───────────────────────── partage (le PC qui fait tourner Synapse : son compte ouvre les accès)
   function shareStatus(e) {
-    const pcBrain = !!share && e.ownerId === accounts.creator()?.id;
+    const pcBrain = !!share && e.ownerId === accounts.pcAccount()?.id;
     const st = pcBrain
       ? share.status()
       : { lan: { on: false, urls: [], error: null }, internet: { state: 'off', url: null, error: null, progress: 0, toolReady: false, fixed: false } };
+    // l'adresse Internet gratuite a changé (Synapse a redémarré) : le créateur doit renvoyer la nouvelle
+    if (pcBrain) st.internet = { ...st.internet, previous: settings.d.netUrlPrev || null, changedAt: settings.d.netUrlAt || 0 };
     return {
       ...st,
       manageAccess: pcBrain,
       brainId: e.id,
       invites: e.access.invitesPublic().map((i) => ({ ...i, token: `${e.id}.${i.token}` })),
-      members: e.access.membersDetailed(),
+      members: e.access.membersDetailed().map(({ linkToken, ...m }) => ({ ...m, link: linkToken ? `${e.id}.${linkToken}` : null })),
       ownerName: e.access.ownerName,
       ownerNameSet: !!e.access.d.ownerName,
       brainName: e.access.brainName,
@@ -241,10 +220,18 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
     };
   }
   const notifyShare = () => {
-    const c = accounts.creator();
+    const c = accounts.pcAccount();
     const e = c && entries.get(c.brainId);
     if (e) e.hub.toOwners('share', shareStatus(e));
   };
+  /** Retient la dernière adresse Internet gratuite, pour prévenir le créateur quand elle change */
+  function trackAddress() {
+    const url = share && share.net.state === 'on' && !share.net.fixed ? share.net.url : null;
+    if (!url || url === settings.d.netUrl) return;
+    const prev = settings.d.netUrl || '';
+    settings.set({ netUrl: url, netUrlPrev: prev, netUrlAt: prev ? Date.now() : 0 });
+    if (prev) tele.event('partage', `nouvelle adresse Internet (${url}) : l'ancienne ne marche plus`, accounts.pcAccount());
+  }
   const share = hosted
     ? null
     : new Share({
@@ -252,7 +239,10 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
         dataDir: root,
         handler: (req, res) => handler(req, res),
         log,
-        onChange: () => notifyShare(),
+        onChange: () => {
+          trackAddress();
+          notifyShare();
+        },
         tunnel: () => ({ token: settings.d.tunnelToken, url: publicUrl() }),
       });
 
@@ -269,7 +259,8 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
     let account = null;
     let sessionHash = null;
     let suspended = false;
-    if (local) account = accounts.creator();
+    // sur ce PC, le compte de ce PC (créé au premier lancement) est reconnu sans mot de passe
+    if (local) account = accounts.pcAccount();
     else if (cookies[ACCOUNT_COOKIE]) {
       const r = accounts.session(cookies[ACCOUNT_COOKIE]);
       if (r) {
@@ -369,17 +360,22 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
     createdAt: a.createdAt,
     local: !!w.local,
     staff: isStaff(a),
+    /** le compte de l'ordinateur qui fait tourner Synapse : il ouvre les accès (Wi-Fi, Internet) */
+    pc: !!a.pc,
   });
 
   function serverInfo(w) {
     const s = settings.d;
-    const creator = accounts.creator();
+    // le responsable de ce serveur : son créateur, ou à défaut la personne de ce PC
+    const creator = accounts.creator() || (hosted ? null : accounts.pcAccount());
     const used = w.account ? accounts.signupsCreatedBy(w.account.id, 30 * DAY).length : 0;
     return {
       hosted,
       name: s.appName || 'Synapse',
       registration: s.registration,
-      setup: hosted && !creator,
+      setup: hosted && !accounts.creator(),
+      /** nouvelle installation : la personne devant ce PC crée son compte (un compte normal) */
+      firstRun: !hosted && !accounts.pcAccount() && !!w.local,
       creatorName: creator?.name || '',
       maintenance: s.maintenance.on ? s.maintenance.message || '' : null,
       announcement: s.announcement.text ? { id: s.announcement.id, text: s.announcement.text, level: s.announcement.level } : null,
@@ -628,7 +624,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       });
     }
     if (pathname === '/api/terms') {
-      const name = accounts.creator()?.name || 'le créateur de Synapse';
+      const name = (accounts.creator() || accounts.pcAccount())?.name || 'le créateur de Synapse';
       return send(200, { text: String(settings.d.terms || '').replaceAll('{createur}', name), at: settings.d.termsAt });
     }
     if (pathname === '/api/errors') {
@@ -654,7 +650,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
           ...info,
           brainId: e.id,
           already,
-          signup: !!info.ok && reg !== 'fermee' && (reg === 'ouverte' || settings.d.brainInvitesAllowSignup),
+          signup: !!info.ok && !info.back && reg !== 'fermee' && (reg === 'ouverte' || settings.d.brainInvitesAllowSignup),
           appName: settings.d.appName,
         });
       }
@@ -676,7 +672,14 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       if (r.error) return send(400, { error: r.error });
       e.hub.membersChanged();
       e.hub.toOwners('share', shareStatus(e));
-      tele.event('cerveau', `${r.member.name} (sans compte) rejoint le cerveau ${deName(e.access.ownerName)} (${r.member.role})`, null, maskIp(w.ip));
+      tele.event(
+        'cerveau',
+        r.back
+          ? `${r.member.name} (sans compte) revient dans le cerveau ${deName(e.access.ownerName)} avec son lien`
+          : `${r.member.name} (sans compte) rejoint le cerveau ${deName(e.access.ownerName)} (${r.member.role})`,
+        null,
+        maskIp(w.ip),
+      );
       return send(200, { ok: true, brainId: e.id, me: { id: r.member.id, name: r.member.name }, role: r.member.role }, { 'Set-Cookie': `sg_${e.id}=${r.session}; ${cookieAttrs(req, 180)}` });
     }
 
@@ -697,7 +700,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
     if (pathname === '/api/auth/signup') {
       if (mustPost()) return;
       if (!limit.signup.hit(w.ip)) return send(429, { error: 'trop de tentatives' });
-      if (!accounts.creator()) return send(409, { error: 'setup' });
+      if (hosted ? !accounts.creator() : !accounts.pcAccount()) return send(409, { error: 'setup' });
       if (maint) return send(503, { error: 'maintenance' });
       const name = cleanName(body.name, '');
       const email = cleanEmail(body.email);
@@ -776,6 +779,25 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       if (mustPost()) return;
       if (w.cookies[ACCOUNT_COOKIE]) accounts.endSession(w.cookies[ACCOUNT_COOKIE]);
       return send(200, { ok: true }, { 'Set-Cookie': dropCookie(ACCOUNT_COOKIE) });
+    }
+    // ── nouvelle installation : la personne devant ce PC crée son compte (un compte normal, pas admin)
+    if (pathname === '/api/auth/first') {
+      if (mustPost()) return;
+      if (hosted || !w.local || accounts.pcAccount()) return send(403, { error: 'setup' });
+      const name = cleanName(body.name, '');
+      const email = cleanEmail(body.email);
+      const pp = passwordProblem(body.password);
+      if (!name) return send(400, { error: 'name' });
+      if (!email) return send(400, { error: 'email' });
+      if (pp) return send(400, { error: 'password', message: pp });
+      if (accounts.byEmail(email)) return send(409, { error: 'exists' });
+      const pass = await hashPassword(body.password);
+      if (accounts.pcAccount()) return send(403, { error: 'setup' });
+      const a = accounts.create({ name, email, pass, role: 'membre', via: 'installation', pc: true });
+      accounts.flush();
+      tele.event('compte', `${a.name} a créé son compte (installation de Synapse)`, a);
+      const token = accounts.newSession(a.id, { ua: req.headers['user-agent'], via: w.via });
+      return send(200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
     }
     if (pathname === '/api/auth/setup') {
       if (mustPost()) return;
@@ -981,11 +1003,12 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
         if (mustPost()) return;
         if (!e.brain.exists) return send(409, { error: 'empty' });
         if (!limit.ops.hit(`${e.id}:${m.id}`)) return send(429, { error: 'trop de changements' });
-        const r = e.brain.apply(m, body.ops, { maxEntities: settings.d.maxNeurons });
+        // une seule personne écrit à la fois dans un élément (celle qui a commencé la première)
+        const r = e.brain.apply(m, body.ops, { maxEntities: settings.d.maxNeurons, lockedBy: (id) => e.hub.lockHolder(id) });
         if (r.accepted.length) {
           e.hub.broadcast({ seq: r.seq, by: m.id, ops: r.accepted }, typeof body.clientId === 'string' ? body.clientId : null);
           tele.bump('ops', r.accepted.length);
-          for (const op of r.accepted) if (op.t === 'put') tele.capture(natureOf(op.e, e.brain.s.kinds));
+          for (const op of r.accepted) if (op.t === 'put') tele.capture(NATURE_OF_TYPE[op.e.type] || 'pensee');
         }
         return send(200, { seq: r.seq, rejected: r.rejected, fixes: r.fixes });
       }
@@ -1071,8 +1094,8 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       }
     }
 
-    // ── accès au serveur (Wi-Fi, Internet) : seulement devant le PC du créateur
-    if (!w.local || !share || w.account?.role !== 'createur') return send(403, { error: 'local' });
+    // ── accès au serveur (Wi-Fi, Internet) : seulement devant ce PC, avec le compte de ce PC
+    if (!w.local || !share || !w.account?.pc) return send(403, { error: 'local' });
     switch (pathname) {
       case '/api/share/lan': {
         if (mustPost()) return;
@@ -1092,7 +1115,8 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
           share.stopInternet();
           for (const x of entries.values()) x.hub.kickWhere((c) => c.via === 'internet', 'closed');
         }
-        settings.set({ share: { internet: !!body.on && share.net.state === 'on' } });
+        // ce que le créateur veut : rouvert au prochain démarrage (et relancé tout seul après une coupure)
+        settings.set({ share: { internet: !!body.on && (share.net.state === 'on' || share.wantNet) } });
         tele.event('partage', body.on ? (share.net.state === 'on' ? `accès Internet ouvert (${share.net.url})` : 'accès Internet impossible') : 'accès Internet fermé', w.account);
         return send(200, shareStatus(e));
       }
@@ -1118,11 +1142,12 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
   async function adminApi(req, res, pathname, w, body, url, send) {
     const me = w.account;
     const post = req.method === 'POST';
+    // un admin a exactement les mêmes droits que le créateur ; seul le compte du créateur est protégé
+    // (personne d'autre que lui ne peut le modifier, le suspendre ou le supprimer)
     const isCreator = me.role === 'createur';
-    const needCreator = () => (isCreator ? false : (send(403, { error: 'createur' }), true));
+    const needCreator = () => false;
     const target = () => accounts.get(String(body.id || ''));
-    /** Un admin gère les membres ; seul un créateur gère les admins et les créateurs */
-    const canManage = (t) => isCreator || t.role === 'membre';
+    const canManage = (t) => isCreator || t.role !== 'createur';
 
     if (!post) {
       switch (pathname) {
@@ -1150,13 +1175,17 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       case '/api/admin/users/update': {
         const t = target();
         if (!t) return send(404, { error: 'missing' });
-        if (!canManage(t) || (body.role && body.role !== 'membre' && !isCreator)) return send(403, { error: 'createur' });
+        if (!canManage(t)) return send(403, { error: 'createur' });
         const what = [];
         if (body.role !== undefined && body.role !== t.role) {
-          if (!SERVER_ROLES.includes(body.role)) return send(400, { error: 'role' });
+          // on nomme un admin ou on le remet membre ; le rôle de créateur ne se donne pas
+          if (!['admin', 'membre'].includes(body.role)) return send(400, { error: 'role' });
           if (t.role === 'createur' && accounts.activeCreators().length <= 1) return send(409, { error: 'last-creator' });
+          if (t.id === me.id && accounts.activeStaff().length <= 1) return send(409, { error: 'last-creator' });
           t.role = body.role;
-          what.push(`rôle ${body.role}`);
+          what.push(body.role === 'admin' ? 'nommé admin' : 'redevenu membre');
+          // l'espace admin apparaît ou disparaît tout de suite chez lui
+          kickAccount(t.id, 'reload');
         }
         if (body.status !== undefined && body.status !== t.status) {
           if (!['actif', 'suspendu'].includes(body.status)) return send(400, { error: 'status' });
@@ -1243,7 +1272,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       }
       case '/api/admin/settings': {
         if (needCreator()) return;
-        const { announcement: _a, maintenance: _m, share: _s, legacyBrain: _l, ...patch } = body || {};
+        const { announcement: _a, maintenance: _m, share: _s, legacyBrain: _l, netUrl: _n, netUrlPrev: _np, netUrlAt: _na, ...patch } = body || {};
         const changed = settings.set(patch);
         if (changed.length) tele.event('admin', `${me.name || 'créateur'} a modifié les réglages (${changed.join(', ')})`, me);
         return send(200, settings.public());
@@ -1452,8 +1481,8 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
         if (hosted) return;
         if (alive.size + on.windows > 0) return;
         const idle = now - lastActivity;
-        if (share.active) {
-          if (idle > SHARE_IDLE_MS) shutdown('partage inactif');
+        if (share.active || share.wantNet) {
+          if (SHARE_IDLE_MS > 0 && idle > SHARE_IDLE_MS) shutdown('partage inactif');
         } else if (idle > (hadClient ? idleMs : firstMs)) {
           shutdown(hadClient ? 'all windows closed' : 'no window connected');
         }

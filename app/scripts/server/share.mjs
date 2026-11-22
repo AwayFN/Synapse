@@ -22,6 +22,25 @@ export class Share {
     this.onChange = onChange || (() => {});
     this.lan = { on: false, servers: [], urls: [], error: null };
     this.net = { state: 'off', url: null, error: null, proc: null, progress: 0 };
+    /** l'accès Internet est voulu : s'il tombe (coupure, mise en veille), il se relance tout seul */
+    this.wantNet = false;
+    this.retryTimer = null;
+    this.retries = 0;
+  }
+
+  /** Relance l'accès Internet après une coupure (10 s, 30 s, 1 min… puis toutes les 5 min) */
+  scheduleRetry() {
+    if (!this.wantNet || this.retryTimer || !this.toolReady()) return;
+    const delays = [10_000, 30_000, 60_000, 120_000, 300_000];
+    const ms = delays[Math.min(this.retries, delays.length - 1)];
+    this.retries++;
+    this.log(`tunnel : nouvel essai dans ${Math.round(ms / 1000)} s`);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      if (this.wantNet && this.net.state !== 'on' && this.net.state !== 'starting' && this.net.state !== 'downloading') void this.startInternet(false);
+    }, ms);
+    this.retryTimer.unref?.();
+    this.onChange();
   }
 
   get active() {
@@ -38,6 +57,8 @@ export class Share {
         progress: this.net.progress,
         toolReady: this.toolReady(),
         fixed: !!this.net.fixed,
+        /** une coupure : relance automatique en attente */
+        retrying: !!this.retryTimer,
       },
     };
   }
@@ -198,9 +219,12 @@ export class Share {
   async startInternet(consent) {
     if (this.net.state === 'on' || this.net.state === 'starting' || this.net.state === 'downloading') return this.status();
     if (!(await this.ensureTool(consent))) return this.status();
+    this.wantNet = true;
     const cfg = this.tunnelConfig() || {};
     if (cfg.token && cfg.url) await this.spawnFixed(cfg);
     else await this.spawnTunnel(true);
+    if (this.net.state === 'on') this.retries = 0;
+    else this.scheduleRetry();
     return this.status();
   }
 
@@ -248,6 +272,7 @@ export class Share {
       proc.on('exit', (code) => {
         if (this.net.proc !== proc) return;
         const wasOn = this.net.state === 'on';
+        if (wasOn) setTimeout(() => this.scheduleRetry(), 0);
         const bad = /invalid|unauthorized|token/i.test(output);
         this.net = {
           state: wasOn ? 'off' : 'error',
@@ -263,7 +288,7 @@ export class Share {
       });
       const timer = setTimeout(() => {
         if (this.net.proc === proc && this.net.state === 'starting') {
-          this.stopInternet();
+          this.killTunnel();
           this.net.state = 'error';
           this.net.error = 'Le tunnel ne répond pas (Internet coupé, jeton ou réglage Cloudflare incorrect).';
           this.onChange();
@@ -319,10 +344,11 @@ export class Share {
           return;
         }
         const wasOn = this.net.state === 'on';
+        if (wasOn) setTimeout(() => this.scheduleRetry(), 0);
         this.net = {
           state: wasOn ? 'off' : 'error',
           url: null,
-          error: wasOn ? "Le tunnel s'est arrêté" : `Le tunnel s'est arrêté (code ${code}). Vérifie la connexion Internet.`,
+          error: wasOn ? "Le tunnel s'est arrêté : nouvel essai automatique dans un instant." : `Le tunnel s'est arrêté (code ${code}). Vérifie la connexion Internet.`,
           proc: null,
           progress: 0,
         };
@@ -332,7 +358,7 @@ export class Share {
       });
       const timer = setTimeout(() => {
         if (this.net.proc === proc && this.net.state === 'starting') {
-          this.stopInternet();
+          this.killTunnel();
           this.net.state = 'error';
           this.net.error = 'Le tunnel ne répond pas (Internet coupé ou Cloudflare indisponible).';
           this.onChange();
@@ -342,7 +368,8 @@ export class Share {
     });
   }
 
-  stopInternet() {
+  /** Arrête le programme du tunnel (sans changer ce qui est voulu) */
+  killTunnel() {
     const p = this.net.proc;
     this.net = { state: 'off', url: null, error: null, proc: null, progress: 0 };
     if (p) {
@@ -350,6 +377,15 @@ export class Share {
         p.kill();
       } catch {}
     }
+  }
+
+  /** Fermeture voulue de l'accès Internet : plus de relance automatique */
+  stopInternet() {
+    this.wantNet = false;
+    this.retries = 0;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    this.killTunnel();
     this.onChange();
     return this.status();
   }

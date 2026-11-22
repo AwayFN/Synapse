@@ -1,210 +1,325 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import type { Activity, Entity, Link, LinkOrigin, Nature, Status } from '../types';
-import { STATUS_LABEL } from '../types';
+import type { Activity, Entity, EntityType, Link, Note, Project, Slot, Task, TaskStatus } from '../types';
+import { hasProject, TASK_STATUS_LABEL, TYPE_LABEL } from '../types';
 import { uid } from '../lib/random';
-import { builtinKind, isHubKind, kindKey, kindLabel, natureOfKind, type KindRegistry } from '../lib/kinds';
-import { displayTitle } from '../lib/entity';
+import { pickColor } from '../lib/color';
+import { minutesNow, todayISO } from '../lib/time';
 import { debouncedStorage } from './storage';
 import { fx } from './fx';
 import { buildSeed } from './seed';
-import { migrateV1, V1_BACKUP_KEY } from './migrate';
-import { findLink } from './graph';
-import { meId } from '../sync/session';
-
-export { displayTitle } from '../lib/entity';
 
 export interface Snapshot {
   entity: Entity;
   links: Link[];
+  childTaskIds: string[];
 }
 
 export interface CreateOpts {
-  /** neurones à relier au nouveau */
+  /** entity ids to link the new one to */
   linkTo?: string[];
-  /** où le faire naître dans l'espace */
+  /** spawn the constellation near this entity */
   near?: string | null;
-  origin?: LinkOrigin;
-  strength?: number;
-  /** pas d'entrée dans le journal */
-  quiet?: boolean;
 }
 
-export type Patch = Partial<Omit<Entity, 'id' | 'createdAt'>>;
+type Fields<T> = Partial<Omit<T, 'id' | 'type' | 'createdAt' | 'updatedAt'>>;
 
 export interface DataState {
   entities: Record<string, Entity>;
   links: Link[];
   activity: Activity[];
-  /** genres inventés par l'utilisateur, ou nature changée d'un genre prédéfini */
-  kinds: KindRegistry;
 
-  create: (input?: Patch, opts?: CreateOpts) => Entity;
-  update: (id: string, patch: Patch) => void;
-  /** a été vu / traversé : ravive sa vitalité sans le marquer modifié */
-  touch: (id: string) => void;
-  setStatus: (id: string, status: Status | null) => void;
-  /** Kanban : poser dans la colonne `status`, avant `beforeId` (ou à la fin) */
-  moveCard: (id: string, status: Status, beforeId: string | null) => void;
+  createProject: (input?: Fields<Project>, opts?: CreateOpts) => Project;
+  createTask: (input?: Fields<Task>, opts?: CreateOpts) => Task;
+  createNote: (input?: Fields<Note>, opts?: CreateOpts) => Note;
+  createSlot: (input?: Fields<Slot>, opts?: CreateOpts) => Slot;
+  update: (id: string, patch: Partial<Entity>) => void;
+  setTaskStatus: (id: string, status: TaskStatus) => void;
+  /** Kanban drop: put task in `status` column, before `beforeId` (or at the end) */
+  moveTask: (id: string, status: TaskStatus, beforeId: string | null) => void;
   remove: (id: string, opts?: { silent?: boolean }) => Snapshot | null;
   restore: (snap: Snapshot) => void;
-  link: (a: string, b: string, opts?: { origin?: LinkOrigin; strength?: number; quiet?: boolean }) => boolean;
+  link: (a: string, b: string) => boolean;
   unlink: (a: string, b: string) => void;
-  /** une connexion empruntée se renforce (apprentissage hebbien) */
-  strengthen: (a: string, b: string, amount?: number) => void;
-  setKindNature: (kind: string, nature: Nature) => void;
   clearSeed: () => number;
-  replaceAll: (data: { entities: Record<string, Entity>; links: Link[]; kinds: KindRegistry }) => void;
-  /** `refs` : les neurones concernés (le journal n'en montre rien aux invités qui ne les voient pas) */
-  log: (text: string, tone: Activity['tone'], refs?: Entity | (Entity | undefined)[]) => void;
+  replaceAll: (data: { entities: Record<string, Entity>; links: Link[] }) => void;
+  log: (text: string, color: string, entityId?: string) => void;
 }
 
 const now = () => Date.now();
 
-function nextOrder(entities: Record<string, Entity>, status: Status): number {
+/**
+ * Invité « peut regarder » : rien ne se modifie chez lui (et on le lui dit). Le serveur refuse de toute façon
+ * ses modifications ; ici on évite qu'il croie avoir changé quelque chose.
+ */
+let readOnly = false;
+let onDenied: (() => void) | null = null;
+export function setDataReadOnly(v: boolean, denied?: () => void) {
+  readOnly = v;
+  if (denied) onDenied = denied;
+}
+const blocked = () => {
+  if (!readOnly) return false;
+  onDenied?.();
+  return true;
+};
+
+function nextOrder(entities: Record<string, Entity>, status: TaskStatus): number {
   let max = 0;
-  for (const e of Object.values(entities)) if (e.status === status) max = Math.max(max, e.order);
+  for (const e of Object.values(entities)) if (e.type === 'task' && e.status === status) max = Math.max(max, e.order);
   return max + 1;
 }
 
-/** Un genre inventé entre dans le registre (nature « pensée » tant qu'on ne la change pas) */
-function withKind(reg: KindRegistry, kind: string): KindRegistry {
-  if (!kind || builtinKind(kind) || reg[kindKey(kind)]) return reg;
-  return { ...reg, [kindKey(kind)]: { label: kind, nature: 'pensee' } };
+const TYPE_OFFSET: Record<EntityType, number> = { project: 0, task: 1, note: 2, slot: 4 };
+
+export function displayTitle(e: Entity | undefined | null): string {
+  if (!e) return '—';
+  const t = e.title.trim();
+  if (t) return t;
+  if (e.type === 'note') {
+    const first = e.content.trim().split('\n')[0]?.trim();
+    if (first) return first.length > 48 ? first.slice(0, 47) + '…' : first;
+  }
+  return 'Sans titre';
 }
 
 export const useData = create<DataState>()(
   persist(
     (set, get) => {
-      const log = (text: string, tone: Activity['tone'], refs?: Entity | (Entity | undefined)[]) => {
-        const list = (Array.isArray(refs) ? refs : refs ? [refs] : []).filter((x): x is Entity => !!x);
-        const item: Activity = { id: uid(), at: now(), text, tone, by: meId() };
-        if (list.length) {
-          item.entityId = list[0].id;
-          item.refs = list.map((x) => x.id);
-          if (list.some((x) => x.private)) item.priv = true;
-          const tags = [...new Set(list.flatMap((x) => x.tags))];
-          if (tags.length) item.tags = tags;
-        }
+      const log = (text: string, color: string, entityId?: string) => {
+        if (readOnly) return;
+        const item: Activity = { id: uid(), at: now(), text, color, entityId };
         set((s) => ({ activity: [item, ...s.activity].slice(0, 60) }));
       };
-      const toneOf = (e: Entity) => natureOfKind(e.kind, get().kinds);
+
+      function insert<T extends Entity>(entity: T, opts?: CreateOpts): T {
+        if (blocked()) return entity;
+        const linkTo = (opts?.linkTo ?? []).filter((id) => id !== entity.id);
+        set((s) => {
+          const links = [...s.links];
+          for (const other of linkTo) {
+            if (!s.entities[other]) continue;
+            if (hasProject(entity) && entity.projectId === other) continue;
+            if (links.some((l) => (l.a === entity.id && l.b === other) || (l.b === entity.id && l.a === other))) continue;
+            links.push({ id: uid(), a: entity.id, b: other, createdAt: now() });
+          }
+          return { entities: { ...s.entities, [entity.id]: entity }, links };
+        });
+        const near = opts?.near ?? (hasProject(entity) ? entity.projectId : null) ?? linkTo[0] ?? null;
+        fx.emit({ kind: 'birth', id: entity.id, near });
+        log(`+ ${TYPE_LABEL[entity.type].toUpperCase()}  ${displayTitle(entity)}`, entity.color, entity.id);
+        return entity;
+      }
+
+      function base(type: EntityType) {
+        const t = now();
+        return {
+          id: uid(),
+          color: pickColor(
+            Object.values(get().entities).map((e) => e.color),
+            TYPE_OFFSET[type],
+          ),
+          createdAt: t,
+          updatedAt: t,
+        };
+      }
+
       const initial = buildSeed();
 
       return {
         entities: initial.entities,
         links: initial.links,
-        activity: [{ id: uid(), at: now(), text: 'SECOND CERVEAU INITIALISÉ', tone: 'system' }],
-        kinds: {},
+        activity: [{ id: uid(), at: now(), text: 'RÉSEAU INITIALISÉ', color: '#00e5ff' }],
         log,
 
-        create: (input = {}, opts) => {
-          const t = now();
-          const e: Entity = {
-            id: uid(),
-            title: '',
-            body: '',
-            kind: '',
-            tags: [],
-            status: null,
-            when: null,
-            due: null,
-            pinned: false,
-            order: 0,
-            createdAt: t,
-            updatedAt: t,
-            touchedAt: t,
-            doneAt: null,
-            createdBy: meId(),
-            updatedBy: meId(),
-            ...input,
-          };
-          if (e.status && input.order === undefined) e.order = nextOrder(get().entities, e.status);
-          if (e.status === 'done' && !e.doneAt) e.doneAt = t;
-          const linkTo = [...new Set(opts?.linkTo ?? [])].filter((id) => id !== e.id);
-          set((s) => {
-            const links = [...s.links];
-            for (const other of linkTo) {
-              if (!s.entities[other]) continue;
-              links.push({ id: uid(), a: e.id, b: other, createdAt: t, strength: opts?.strength ?? 0.5, usedAt: t, origin: opts?.origin ?? 'manuel', createdBy: meId() });
-            }
-            return { entities: { ...s.entities, [e.id]: e }, links, kinds: withKind(s.kinds, e.kind) };
-          });
-          fx.emit({ kind: 'birth', id: e.id, near: opts?.near ?? linkTo[0] ?? null });
-          if (!opts?.quiet) log(`+ ${kindLabel(e.kind).toUpperCase()}  ${displayTitle(e)}`, toneOf(e), e);
-          return e;
+        createProject: (input, opts) =>
+          insert<Project>(
+            {
+              ...base('project'),
+              type: 'project',
+              title: '',
+              description: '',
+              status: 'active',
+              deadline: null,
+              ...input,
+            } as Project,
+            opts,
+          ),
+
+        createTask: (input, opts) => {
+          const status = input?.status ?? 'todo';
+          return insert<Task>(
+            {
+              ...base('task'),
+              type: 'task',
+              title: '',
+              description: '',
+              projectId: null,
+              status,
+              date: null,
+              time: null,
+              order: nextOrder(get().entities, status),
+              doneAt: status === 'done' ? now() : null,
+              ...input,
+            } as Task,
+            opts,
+          );
+        },
+
+        createNote: (input, opts) =>
+          insert<Note>(
+            {
+              ...base('note'),
+              type: 'note',
+              title: '',
+              content: '',
+              tags: [],
+              ...input,
+            } as Note,
+            opts,
+          ),
+
+        createSlot: (input, opts) => {
+          const start = input?.start ?? Math.min(1380, Math.ceil(minutesNow() / 15) * 15);
+          return insert<Slot>(
+            {
+              ...base('slot'),
+              type: 'slot',
+              title: '',
+              description: '',
+              projectId: null,
+              date: todayISO(),
+              start,
+              end: (start + 60) % 1440,
+              ...input,
+            } as Slot,
+            opts,
+          );
         },
 
         update: (id, patch) => {
-          const s = get();
-          const e = s.entities[id];
-          if (!e) return;
-          const t = now();
-          const next: Entity = { ...e, ...patch, updatedAt: t, touchedAt: t, updatedBy: meId() };
-          if ('kind' in patch && patch.kind !== e.kind) {
-            const def = builtinKind(next.kind);
-            if (def?.status && !next.status) next.status = def.hub ? 'doing' : 'todo';
+          const e = get().entities[id];
+          if (!e || blocked()) return;
+          if (e.type === 'task' && 'status' in patch && patch.status && patch.status !== e.status) {
+            const { status, ...rest } = patch as Partial<Task>;
+            if (Object.keys(rest).length) get().update(id, rest as Partial<Entity>);
+            get().setTaskStatus(id, status as TaskStatus);
+            return;
           }
-          const statusChanged = next.status !== e.status;
-          if (statusChanged) {
-            if (next.status && !('order' in patch)) next.order = nextOrder(s.entities, next.status);
-            next.doneAt = next.status === 'done' ? t : null;
-          }
-          set((st) => ({ entities: { ...st.entities, [id]: next }, kinds: withKind(st.kinds, next.kind) }));
-          if (statusChanged && next.status === 'done') {
-            fx.emit({ kind: 'celebrate', id });
-            log(`✓ ACCOMPLI  ${displayTitle(next)}`, toneOf(next), next);
-          } else if (statusChanged && next.status) {
-            fx.emit({ kind: 'touch', id });
-            log(`→ ${STATUS_LABEL[next.status].toUpperCase()}  ${displayTitle(next)}`, toneOf(next), next);
+          const prevProject = hasProject(e) ? e.projectId : null;
+          set((s) => ({
+            entities: { ...s.entities, [id]: { ...s.entities[id], ...patch, updatedAt: now() } as Entity },
+          }));
+          const next = get().entities[id];
+          if (hasProject(next) && next.projectId && next.projectId !== prevProject) {
+            // a parent link replaces any explicit link between the two
+            set((s) => ({
+              links: s.links.filter(
+                (l) => !((l.a === id && l.b === next.projectId) || (l.b === id && l.a === next.projectId)),
+              ),
+            }));
+            fx.emit({ kind: 'link', a: id, b: next.projectId });
           } else {
             fx.emit({ kind: 'touch', id });
           }
+          if ('status' in patch && e.type === 'project' && patch.status !== e.status) {
+            log(
+              `${patch.status === 'done' ? '✓ PROJET TERMINÉ' : '↺ PROJET RELANCÉ'}  ${displayTitle(e)}`,
+              e.color,
+              id,
+            );
+            if (patch.status === 'done') fx.emit({ kind: 'celebrate', id });
+          }
         },
 
-        touch: (id) => {
-          const e = get().entities[id];
-          if (!e || now() - e.touchedAt < 20000) return;
-          set((s) => ({ entities: { ...s.entities, [id]: { ...e, touchedAt: now() } } }));
-        },
-
-        setStatus: (id, status) => get().update(id, { status }),
-
-        moveCard: (id, status, beforeId) => {
+        setTaskStatus: (id, status) => {
+          if (blocked()) return;
           const t = get().entities[id];
-          if (!t) return;
+          if (!t || t.type !== 'task' || t.status === status) return;
+          const order = nextOrder(get().entities, status);
+          set((s) => ({
+            entities: {
+              ...s.entities,
+              [id]: { ...t, status, order, doneAt: status === 'done' ? now() : null, updatedAt: now() },
+            },
+          }));
+          if (status === 'done') {
+            fx.emit({ kind: 'celebrate', id });
+            log(`✓ ACCOMPLIE  ${displayTitle(t)}`, t.color, id);
+          } else {
+            fx.emit({ kind: 'touch', id });
+            log(`→ ${TASK_STATUS_LABEL[status].toUpperCase()}  ${displayTitle(t)}`, t.color, id);
+          }
+        },
+
+        moveTask: (id, status, beforeId) => {
+          if (blocked()) return;
+          const t = get().entities[id];
+          if (!t || t.type !== 'task') return;
           const col = Object.values(get().entities)
-            .filter((e) => e.status === status && e.id !== id && !isHubKind(e.kind))
+            .filter((e): e is Task => e.type === 'task' && e.status === status && e.id !== id)
             .sort((a, b) => a.order - b.order);
           let order: number;
           const idx = beforeId ? col.findIndex((x) => x.id === beforeId) : -1;
           if (idx === -1) order = (col[col.length - 1]?.order ?? 0) + 1;
           else if (idx === 0) order = col[0].order - 1;
           else order = (col[idx - 1].order + col[idx].order) / 2;
-          get().update(id, { status, order });
+          const statusChanged = t.status !== status;
+          set((s) => ({
+            entities: {
+              ...s.entities,
+              [id]: {
+                ...t,
+                status,
+                order,
+                doneAt: status === 'done' ? (t.doneAt ?? now()) : null,
+                updatedAt: now(),
+              },
+            },
+          }));
+          if (statusChanged) {
+            if (status === 'done') {
+              fx.emit({ kind: 'celebrate', id });
+              log(`✓ ACCOMPLIE  ${displayTitle(t)}`, t.color, id);
+            } else {
+              fx.emit({ kind: 'touch', id });
+              log(`→ ${TASK_STATUS_LABEL[status].toUpperCase()}  ${displayTitle(t)}`, t.color, id);
+            }
+          }
         },
 
         remove: (id, opts) => {
+          if (blocked()) return null;
           const s = get();
           const e = s.entities[id];
           if (!e) return null;
           const links = s.links.filter((l) => l.a === id || l.b === id);
+          // tâches et créneaux du projet : ils restent, sans projet
+          const childTaskIds = Object.values(s.entities)
+            .filter((x) => hasProject(x) && x.projectId === id)
+            .map((x) => x.id);
           fx.emit({ kind: 'death', id });
           const entities = { ...s.entities };
           delete entities[id];
+          for (const cid of childTaskIds) entities[cid] = { ...(entities[cid] as Task | Slot), projectId: null };
           set({ entities, links: s.links.filter((l) => l.a !== id && l.b !== id) });
           if (opts?.silent) {
-            // brouillon vide abandonné : aucune trace dans le journal
+            // discarded draft: leave no trace in the activity log
             set((st) => ({ activity: st.activity.filter((a) => a.entityId !== id) }));
           } else {
-            log(`− SUPPRIMÉ  ${displayTitle(e)}`, 'alert', e);
+            log(`− ${TYPE_LABEL[e.type].toUpperCase()}  ${displayTitle(e)}`, '#ff4d6d');
           }
-          return { entity: e, links };
+          return { entity: e, links, childTaskIds };
         },
 
         restore: (snap) => {
+          if (blocked()) return;
           set((s) => {
             const entities = { ...s.entities, [snap.entity.id]: snap.entity };
+            for (const cid of snap.childTaskIds) {
+              const t = entities[cid];
+              if (hasProject(t) && t.projectId == null) entities[cid] = { ...t, projectId: snap.entity.id };
+            }
             const links = [
               ...s.links,
               ...snap.links.filter((l) => entities[l.a] && entities[l.b] && !s.links.some((x) => x.id === l.id)),
@@ -212,87 +327,66 @@ export const useData = create<DataState>()(
             return { entities, links };
           });
           fx.emit({ kind: 'birth', id: snap.entity.id });
-          log(`↺ RESTAURÉ  ${displayTitle(snap.entity)}`, toneOf(snap.entity), snap.entity);
+          log(`↺ RESTAURÉ  ${displayTitle(snap.entity)}`, snap.entity.color, snap.entity.id);
         },
 
-        link: (a, b, opts) => {
+        link: (a, b) => {
+          if (blocked()) return false;
           const s = get();
           const ea = s.entities[a];
           const eb = s.entities[b];
           if (!ea || !eb || a === b) return false;
-          if (findLink(s.links, a, b)) return false;
-          const t = now();
-          set({
-            links: [...s.links, { id: uid(), a, b, createdAt: t, strength: opts?.strength ?? 0.5, usedAt: t, origin: opts?.origin ?? 'manuel', createdBy: meId() }],
-            entities: { ...s.entities, [a]: { ...ea, touchedAt: t }, [b]: { ...eb, touchedAt: t } },
-          });
+          if (hasProject(ea) && ea.projectId === b) return false;
+          if (hasProject(eb) && eb.projectId === a) return false;
+          if (s.links.some((l) => (l.a === a && l.b === b) || (l.a === b && l.b === a))) return false;
+          set({ links: [...s.links, { id: uid(), a, b, createdAt: now() }] });
           fx.emit({ kind: 'link', a, b });
-          if (!opts?.quiet) log(`⟷ RELIÉ  ${displayTitle(ea)} ↔ ${displayTitle(eb)}`, toneOf(ea), [ea, eb]);
+          log(`⟷ LIEN  ${displayTitle(ea)} ↔ ${displayTitle(eb)}`, ea.color);
           return true;
         },
 
         unlink: (a, b) => {
+          if (blocked()) return;
           const s = get();
           const ea = s.entities[a];
           const eb = s.entities[b];
-          set({ links: s.links.filter((l) => !((l.a === a && l.b === b) || (l.a === b && l.b === a))) });
-          if (ea && eb) log(`✕ DÉLIÉ  ${displayTitle(ea)} ↔ ${displayTitle(eb)}`, 'system', [ea, eb]);
-        },
-
-        strengthen: (a, b, amount = 0.08) => {
-          const s = get();
-          const l = findLink(s.links, a, b);
-          if (!l) return;
-          const t = now();
-          const strength = Math.min(1, l.strength + amount * (1 - l.strength) + 0.01);
-          set({ links: s.links.map((x) => (x === l ? { ...x, strength, usedAt: t } : x)) });
-          fx.emit({ kind: 'strengthen', a, b });
-        },
-
-        setKindNature: (kind, nature) => {
-          if (!kind) return;
-          set((s) => ({ kinds: { ...s.kinds, [kindKey(kind)]: { label: kind, nature } } }));
-          log(`◇ GENRE « ${kind.toUpperCase()} » → ${nature.toUpperCase()}`, nature);
+          if (hasProject(ea) && ea.projectId === b) {
+            set({ entities: { ...s.entities, [a]: { ...ea, projectId: null, updatedAt: now() } } });
+          } else if (hasProject(eb) && eb.projectId === a) {
+            set({ entities: { ...s.entities, [b]: { ...eb, projectId: null, updatedAt: now() } } });
+          }
+          set((st) => ({ links: st.links.filter((l) => !((l.a === a && l.b === b) || (l.a === b && l.b === a))) }));
+          if (ea && eb) log(`✕ LIEN  ${displayTitle(ea)} ↔ ${displayTitle(eb)}`, '#888');
         },
 
         clearSeed: () => {
+          if (blocked()) return 0;
           const s = get();
           const seedIds = new Set(Object.values(s.entities).filter((e) => e.seed).map((e) => e.id));
           if (!seedIds.size) return 0;
           for (const id of seedIds) fx.emit({ kind: 'death', id });
           const entities: Record<string, Entity> = {};
-          for (const e of Object.values(s.entities)) if (!seedIds.has(e.id)) entities[e.id] = e;
+          for (const e of Object.values(s.entities)) {
+            if (seedIds.has(e.id)) continue;
+            entities[e.id] = hasProject(e) && e.projectId && seedIds.has(e.projectId) ? { ...e, projectId: null } : e;
+          }
           set({ entities, links: s.links.filter((l) => !seedIds.has(l.a) && !seedIds.has(l.b)) });
-          log(`− ${seedIds.size} EXEMPLES SUPPRIMÉS`, 'alert');
+          log(`− ${seedIds.size} EXEMPLES SUPPRIMÉS`, '#ff4d6d');
           return seedIds.size;
         },
 
         replaceAll: (data) => {
-          set({ entities: data.entities, links: data.links, kinds: data.kinds });
-          log(`↓ IMPORT  ${Object.keys(data.entities).length} NEURONES`, 'system');
+          if (blocked()) return;
+          set({ entities: data.entities, links: data.links });
+          log(`↓ IMPORT  ${Object.keys(data.entities).length} ENTITÉS`, '#00e5ff');
         },
       };
     },
     {
       name: 'synapse-data',
-      version: 2,
+      version: 1,
       storage: createJSONStorage(() => debouncedStorage),
-      partialize: (s) => ({ entities: s.entities, links: s.links, activity: s.activity, kinds: s.kinds }),
-      migrate: (persisted, version) => {
-        if (version < 2) {
-          // copie de sécurité des données V1 avant toute conversion
-          try {
-            if (!localStorage.getItem(V1_BACKUP_KEY)) localStorage.setItem(V1_BACKUP_KEY, JSON.stringify(persisted));
-          } catch {
-            /* stockage plein : la migration continue quand même */
-          }
-          const v2 = migrateV1((persisted ?? {}) as Parameters<typeof migrateV1>[0]);
-          const first: Activity = { id: uid(), at: now(), text: 'SYNAPSE V2 · RÉSEAU CONVERTI EN SECOND CERVEAU', tone: 'system' };
-          const activity: Activity[] = [first, ...(v2.activity ?? [])].slice(0, 60);
-          return { entities: v2.entities, links: v2.links, kinds: v2.kinds, activity } as unknown as DataState;
-        }
-        return persisted as DataState;
-      },
+      partialize: (s) => ({ entities: s.entities, links: s.links, activity: s.activity }),
     },
   ),
 );

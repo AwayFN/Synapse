@@ -3,10 +3,9 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { layout } from './layout';
 import { labelHover, telemetry } from './telemetry';
-import { toggleLink, useUI } from '../store/ui';
-import { can } from '../sync/perm';
-import { useSession } from '../sync/session';
+import { useUI } from '../store/ui';
 import { fx } from '../store/fx';
+import { useSession } from '../sync/session';
 
 export function isTyping() {
   const el = document.activeElement as HTMLElement | null;
@@ -65,7 +64,6 @@ class Rig {
   pointerIn = false;
   drag: { button: number; x: number; y: number; moved: number } | null = null;
   shift = 0;
-  shiftY = 0;
   booted = false;
   speedScale = 1;
   cursor = '';
@@ -204,6 +202,13 @@ class Rig {
     }
   }
 
+  click() {
+    if (overlayOpen()) return;
+    const ui = useUI.getState();
+    if (ui.hoveredId) ui.openEntity(ui.hoveredId);
+    else if (ui.selectedId) ui.closePanel();
+  }
+
   /** Un doigt : tourner AUTOUR du réseau (ou du neurone ouvert), sans perdre le réseau de vue */
   touchOrbit(dx: number, dy: number) {
     if (this.mode === 'free') {
@@ -231,35 +236,23 @@ class Rig {
     } else {
       const node = this.mode === 'focus' && this.focusId ? layout.nodes.get(this.focusId) : null;
       const min = node ? node.radius * 1.5 : 12;
-      this.orbit.dist = THREE.MathUtils.clamp(this.orbit.dist / ratio, min, 1200);
+      this.orbit.dist = THREE.MathUtils.clamp(this.orbit.dist / ratio, min, 1600);
     }
   }
 
-  click(shift = false) {
-    if (overlayOpen()) return;
-    const ui = useUI.getState();
-    // Maj+clic sur un autre neurone : relier (ou délier) avec celui qui est ouvert
-    if (shift && ui.hoveredId && ui.selectedId && ui.hoveredId !== ui.selectedId && can.link()) {
-      toggleLink(ui.selectedId, ui.hoveredId);
-      return;
-    }
-    if (ui.hoveredId) ui.openEntity(ui.hoveredId);
-    else if (ui.selectedId) ui.closePanel();
-  }
-
-  /** Neurone sous le pointeur (rayon élargi pour un doigt) */
-  pick(scale = 1): string | null {
+  /** Neurone sous le doigt (rayon élargi : un doigt est moins précis qu'une souris) */
+  pickAt(scale = 1.8): string | null {
     this.ray.setFromCamera(this.mouse, this.cam);
     const ray = this.ray.ray;
     let best = Infinity;
     let hit: string | null = null;
     for (const n of layout.list) {
-      if (n.vis < 0.05 || n.birth < 0.5) continue;
+      if (n.vis < 0.25 || n.birth < 0.5) continue;
       const toC = this.v3.subVectors(n.render, ray.origin);
       const along = toC.dot(ray.direction);
       if (along < 0.5) continue;
       const d2 = toC.lengthSq() - along * along;
-      const r = Math.max(n.glyph * 1.9 + 0.6, along * 0.014) * scale;
+      const r = Math.max(n.radius * 0.62, along * 0.016) * scale;
       if (d2 < r * r && along < best) {
         best = along;
         hit = n.id;
@@ -273,7 +266,7 @@ class Rig {
     const inUI = (t: EventTarget | null) => !!(t as HTMLElement | null)?.closest?.('[data-ui]');
 
     // ── au doigt (téléphone, tablette) : un doigt = tourner · pincer = avancer / reculer · deux doigts = se déplacer
-    //    toucher = ouvrir le neurone (ou refermer) · double toucher dans le vide = vue d'ensemble
+    //    toucher = ouvrir l'élément (ou refermer) · double toucher dans le vide = vue d'ensemble
     const touches = new Map<number, { x: number; y: number }>();
     let pinch: { d: number; mx: number; my: number } | null = null;
     let tap: { t: number; moved: number } | null = null;
@@ -330,7 +323,7 @@ class Rig {
       if (touches.size === 0 && tap && e.type === 'pointerup' && tap.moved < 10 && performance.now() - tap.t < 450) {
         const r = el.getBoundingClientRect();
         this.mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -(((e.clientY - r.top) / r.height) * 2 - 1));
-        const hit = overlayOpen() ? null : this.pick(1.8);
+        const hit = overlayOpen() ? null : this.pickAt(1.8);
         useUI.getState().setHovered(hit);
         const now = performance.now();
         if (!hit && now - lastTap < 350) this.overview();
@@ -378,7 +371,7 @@ class Rig {
       } catch {
         /* ignore */
       }
-      if (d && d.button === 0 && d.moved < 5) this.click(e.shiftKey);
+      if (d && d.button === 0 && d.moved < 5) this.click();
     };
     const onWheel = (e: WheelEvent) => {
       if (inUI(e.target)) return;
@@ -527,22 +520,34 @@ class Rig {
     this.qf.setFromEuler(this.e.set(this.float.y * 0.022, -this.float.x * 0.032, 0, 'YXZ'));
     this.cam.quaternion.copy(this.baseQuat).multiply(this.qf);
 
-    // shift the projection when the panel is open so the focused constellation stays visible:
-    // to the left beside the side panel on a computer, upward above the bottom sheet on a phone
+    // shift the projection when the side panel is open so the focused constellation stays visible
     const panelOpen = !!ui.selectedId && ui.view === 'network' && !ui.editorId;
-    const phone = width < 768;
-    const shiftTarget = panelOpen && !phone ? Math.min(width * 0.2, 225) : 0;
-    const shiftYTarget = panelOpen && phone ? height * 0.24 : 0;
+    const shiftTarget = panelOpen ? Math.min(width * 0.2, 225) : 0;
     this.shift += (shiftTarget - this.shift) * (1 - Math.exp(-dt * 5));
-    this.shiftY += (shiftYTarget - this.shiftY) * (1 - Math.exp(-dt * 5));
-    if (Math.abs(this.shift) > 0.5 || Math.abs(this.shiftY) > 0.5) this.cam.setViewOffset(width, height, this.shift, this.shiftY, width, height);
+    if (Math.abs(this.shift) > 0.5) this.cam.setViewOffset(width, height, this.shift, 0, width, height);
     else if (this.cam.view?.enabled) this.cam.clearViewOffset();
     this.cam.updateMatrixWorld();
 
-    // picking: label hover wins, else ray vs constellation spheres (a finger picks on tap, in attach)
+    // picking: label hover wins, else ray vs constellation spheres
     if (!this.drag || this.drag.moved < 4) {
       let hit: string | null = labelHover.id;
-      if (!hit && this.pointerIn && !overlayOpen()) hit = this.pick();
+      if (!hit && this.pointerIn && !overlayOpen()) {
+        this.ray.setFromCamera(this.mouse, this.cam);
+        const ray = this.ray.ray;
+        let best = Infinity;
+        for (const n of layout.list) {
+          if (n.vis < 0.25 || n.birth < 0.5) continue;
+          const toC = this.v3.subVectors(n.render, ray.origin);
+          const along = toC.dot(ray.direction);
+          if (along < 0.5) continue;
+          const d2 = toC.lengthSq() - along * along;
+          const r = Math.max(n.radius * 0.62, along * 0.016);
+          if (d2 < r * r && along < best) {
+            best = along;
+            hit = n.id;
+          }
+        }
+      }
       ui.setHovered(hit);
     }
     const cursor = this.drag && this.drag.moved > 4 ? 'grabbing' : ui.hoveredId ? 'pointer' : 'default';

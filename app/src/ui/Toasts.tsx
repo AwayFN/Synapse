@@ -1,5 +1,4 @@
 import { useUI } from '../store/ui';
-import { PEARL_HEX } from '../lib/kinds';
 import { cvar } from './common';
 
 export function Toasts() {
@@ -11,11 +10,11 @@ export function Toasts() {
         <div
           key={t.id}
           className="glass neon anim-pop pointer-events-auto flex items-center gap-3 pl-3.5 pr-2 py-2"
-          style={cvar(t.color ?? PEARL_HEX)}
+          style={cvar(t.color ?? '#00e5ff')}
           data-ui
         >
           <span className="dot" />
-          <span className="hud text-[10.5px] text-white/85 max-w-[480px] truncate">{t.text}</span>
+          <span className="hud text-[10.5px] text-white/85 max-w-[460px] truncate">{t.text}</span>
           {t.action && (
             <button
               className="btn btn-primary !py-1 !px-2 !text-[9.5px]"
