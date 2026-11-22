@@ -7,7 +7,7 @@
 ## Télécharger et lancer (Windows)
 
 1. Installe **Node.js** (gratuit, une seule fois) : [nodejs.org](https://nodejs.org/fr/download), version **LTS**.
-2. Télécharge Synapse : **[Synapse.zip](https://github.com/AwayFN/Synapse/archive/refs/heads/main.zip)**, puis clic droit sur le fichier → **Extraire tout**.
+2. **[Télécharge Synapse](https://github.com/AwayFN/Synapse/archive/refs/heads/main.zip)**, puis clic droit sur le fichier téléchargé → **Extraire tout**.
 3. Ouvre le dossier et double-clique sur **Lancer Synapse**.
 
 Synapse s'ouvre dans sa propre fenêtre. Ton cerveau est enregistré sur ton ordinateur, rien n'est envoyé ailleurs.
