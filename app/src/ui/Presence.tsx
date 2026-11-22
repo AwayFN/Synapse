@@ -33,7 +33,7 @@ export function PresenceBar() {
         return (
           <button
             key={p.id}
-            className={`glass flex items-center gap-2.5 pl-1.5 pr-3 py-1 max-w-[290px] transition-colors ${on ? 'border-white/40' : 'hover:border-white/20'}`}
+            className={`glass flex items-center gap-2.5 pl-1.5 pr-3 py-1 max-w-[290px] max-md:max-w-[190px] transition-colors ${on ? 'border-white/40' : 'hover:border-white/20'}`}
             title={on ? 'Ne plus suivre' : `Suivre ${p.name} : ta caméra va où il regarde`}
             onClick={() => {
               useSession.setState({ following: on ? null : p.id });

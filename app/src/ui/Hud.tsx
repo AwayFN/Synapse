@@ -87,12 +87,12 @@ function ViewTabs() {
         <button
           key={t.v}
           onClick={() => setView(t.v)}
-          className={`hud text-[10.5px] px-4 py-2 flex items-center gap-2 transition-colors ${
+          className={`hud text-[10.5px] px-4 py-2 max-md:px-3 max-md:py-2.5 flex items-center gap-2 transition-colors ${
             view === t.v ? 'text-white bg-white/[0.06] shadow-[inset_0_-1px_0_rgb(var(--pearl)/0.8)]' : 'text-white/45 hover:text-white'
           }`}
         >
           {t.label}
-          <span className="text-[8.5px] text-white/28">{t.key}</span>
+          <span className="text-[8.5px] text-white/28 max-md:hidden">{t.key}</span>
         </button>
       ))}
     </div>
@@ -355,18 +355,27 @@ export function Hud() {
       <i className="pc bl !w-5 !h-5 !left-3 !bottom-3" style={cvar(PEARL_HEX, { opacity: 0.4 })} />
       <i className="pc br !w-5 !h-5 !right-3 !bottom-3" style={cvar(PEARL_HEX, { opacity: 0.4 })} />
 
-      <div className="absolute left-8 top-7">
+      <div className="absolute left-8 top-7 max-md:left-4 max-md:top-4">
         <div className="flex items-center gap-3">
           <div className="w-2 h-2 rotate-45 bg-[rgb(var(--pearl))] shadow-[0_0_10px_rgb(var(--pearl)/0.7)]" />
           <span className="hud text-[15px] font-semibold tracking-[0.42em] text-white">Synapse</span>
         </div>
-        <Subtitle />
-        <Legend />
+        <div className="max-md:hidden">
+          <Subtitle />
+          <Legend />
+        </div>
       </div>
 
-      <div className="absolute left-1/2 -translate-x-1/2 top-6 flex flex-col items-center gap-3">
+      {/* sur téléphone, les vues passent en bas, à portée de pouce */}
+      <div
+        className={`absolute left-1/2 -translate-x-1/2 top-6 flex flex-col items-center gap-3 max-md:top-auto max-md:bottom-[calc(14px+env(safe-area-inset-bottom))] ${
+          panelOpen ? 'max-md:opacity-0 max-md:pointer-events-none' : ''
+        }`}
+      >
         <ViewTabs />
-        <TagBar />
+        <div className="max-md:hidden">
+          <TagBar />
+        </div>
       </div>
 
       <div
@@ -379,22 +388,28 @@ export function Hud() {
           <PresenceBar />
         </div>
       </div>
-      <div className="absolute left-1/2 -translate-x-1/2 top-[84px] min-[1120px]:hidden pointer-events-auto flex flex-col items-center gap-2">
+      <div className="absolute left-1/2 -translate-x-1/2 top-[84px] min-[1120px]:hidden pointer-events-auto flex flex-col items-center gap-2 max-md:left-auto max-md:right-3 max-md:top-3 max-md:translate-x-0 max-md:items-end">
         <AccountChip />
         <PresenceBar />
       </div>
       <PreviewBanner />
 
-      <div className="absolute left-8 bottom-8">
+      <div className="absolute left-8 bottom-8 max-md:hidden">
         <Counter />
       </div>
 
-      <div className="absolute right-8 bottom-8 transition-opacity duration-300" style={{ opacity: panelOpen ? 0 : 1 }}>
+      <div className="absolute right-8 bottom-8 transition-opacity duration-300 max-md:hidden" style={{ opacity: panelOpen ? 0 : 1 }}>
         <ActivityLog />
       </div>
 
-      <div className="absolute left-1/2 -translate-x-1/2 bottom-7 flex flex-col items-center gap-3">
-        <Trail />
+      <div
+        className={`absolute left-1/2 -translate-x-1/2 bottom-7 flex flex-col items-center gap-3 max-md:bottom-[calc(70px+env(safe-area-inset-bottom))] ${
+          panelOpen ? 'max-md:opacity-0 max-md:pointer-events-none' : ''
+        }`}
+      >
+        <div className="max-md:hidden">
+          <Trail />
+        </div>
         <button
           data-ui
           onClick={() => openPalette(can.write() ? '' : '/')}
@@ -402,10 +417,12 @@ export function Hud() {
         >
           <span className="text-white text-sm leading-none">{can.write() ? '+' : '⌕'}</span>
           {can.write() ? 'Capturer · chercher' : 'Chercher'}
-          <Kbd>Ctrl K</Kbd>
+          <span className="max-md:hidden">
+            <Kbd>Ctrl K</Kbd>
+          </span>
         </button>
         <Hints />
-        <div className="hud text-[9px] text-white/30 min-[1400px]:hidden pointer-events-none">
+        <div className="hud text-[9px] text-white/30 min-[1400px]:hidden pointer-events-none max-md:hidden">
           <Kbd>?</Kbd> aide & raccourcis
         </div>
       </div>

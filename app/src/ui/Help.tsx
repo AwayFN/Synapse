@@ -147,6 +147,16 @@ export function Help() {
         </div>
 
         <div className="mt-6">
+          <div className="xs-label mb-2">Sur téléphone</div>
+          <div className="text-[12px] text-white/55 leading-relaxed">
+            Ton prénom en haut à droite → <span className="text-white/80">Sur ton téléphone</span> : vise le QR code avec l’appareil photo, et tu es connecté (rien à
+            installer). Au doigt : <span className="text-white/75">un doigt</span> tourne autour du réseau, <span className="text-white/75">pincer</span> avance ou
+            recule, <span className="text-white/75">deux doigts</span> déplacent, <span className="text-white/75">toucher</span> ouvre un neurone,{' '}
+            <span className="text-white/75">double toucher</span> dans le vide revient à la vue d’ensemble. Chaque invitation a aussi son QR code (bouton QR).
+          </div>
+        </div>
+
+        <div className="mt-6">
           <div className="xs-label mb-2">Partager ton cerveau · inviter des amis</div>
           <div className="text-[12px] text-white/55 leading-relaxed">
             Bouton <span className="text-white/80">Partager</span> en haut à droite : crée un lien d’invitation avec un rôle (

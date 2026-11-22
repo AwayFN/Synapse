@@ -59,7 +59,7 @@ export class Accounts {
     this.file = path.join(dir, 'comptes.json');
     this.log = log;
     const d = readJsonFile(this.file) || {};
-    this.d = { accounts: obj(d.accounts), sessions: obj(d.sessions), signups: obj(d.signups), resets: obj(d.resets) };
+    this.d = { accounts: obj(d.accounts), sessions: obj(d.sessions), signups: obj(d.signups), resets: obj(d.resets), links: obj(d.links) };
     for (const a of Object.values(this.d.accounts)) if (!Array.isArray(a.shared)) a.shared = [];
     /** accountId → { n, until } : tentatives de connexion ratées (en mémoire) */
     this.fails = new Map();
@@ -134,6 +134,7 @@ export class Accounts {
     delete this.d.accounts[id];
     for (const [k, s] of Object.entries(this.d.sessions)) if (s.accountId === id) delete this.d.sessions[k];
     for (const [k, r] of Object.entries(this.d.resets)) if (r.accountId === id) delete this.d.resets[k];
+    for (const [k, l] of Object.entries(this.d.links)) if (l.accountId === id) delete this.d.links[k];
     for (const a of this.list()) if (a.invitedBy === id) a.invitedBy = null;
     this.fails.delete(id);
     this.save();
@@ -310,6 +311,32 @@ export class Accounts {
     this.save();
   }
 
+  // ── ouvrir son compte sur un autre appareil (téléphone) : QR code à usage unique, valable 10 minutes
+  createLoginLink(accountId) {
+    for (const [k, l] of Object.entries(this.d.links)) if (l.accountId === accountId || Date.now() > l.expiresAt) delete this.d.links[k];
+    const token = randomToken(24);
+    this.d.links[sha256(token)] = { accountId, createdAt: Date.now(), expiresAt: Date.now() + 10 * 60_000 };
+    this.save();
+    return token;
+  }
+  loginLink(token) {
+    if (!token || typeof token !== 'string' || token.length > 100) return null;
+    const hash = sha256(token);
+    const l = this.d.links[hash];
+    if (!l) return null;
+    const account = this.get(l.accountId);
+    if (!account || Date.now() > l.expiresAt) {
+      delete this.d.links[hash];
+      this.save();
+      return null;
+    }
+    return { hash, account };
+  }
+  consumeLoginLink(hash) {
+    delete this.d.links[hash];
+    this.save();
+  }
+
   // ── tentatives de connexion : après 8 échecs, le compte est bloqué 15 minutes
   locked(id) {
     const f = this.fails.get(id);
@@ -334,6 +361,7 @@ export class Accounts {
       if (now - s.createdAt > SESSION_DAYS * 86400_000 || !this.d.accounts[s.accountId]) delete this.d.sessions[k];
     }
     for (const [k, r] of Object.entries(this.d.resets)) if (now > r.expiresAt || !this.d.accounts[r.accountId]) delete this.d.resets[k];
+    for (const [k, l] of Object.entries(this.d.links)) if (now > l.expiresAt || !this.d.accounts[l.accountId]) delete this.d.links[k];
     for (const [k, s] of Object.entries(this.d.signups)) {
       const end = s.revokedAt || s.expiresAt || 0;
       if (end && now - end > 90 * 86400_000) delete this.d.signups[k];

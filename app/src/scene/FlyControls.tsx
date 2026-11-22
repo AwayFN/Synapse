@@ -65,6 +65,7 @@ class Rig {
   pointerIn = false;
   drag: { button: number; x: number; y: number; moved: number } | null = null;
   shift = 0;
+  shiftY = 0;
   booted = false;
   speedScale = 1;
   cursor = '';
@@ -203,6 +204,37 @@ class Rig {
     }
   }
 
+  /** Un doigt : tourner AUTOUR du réseau (ou du neurone ouvert), sans perdre le réseau de vue */
+  touchOrbit(dx: number, dy: number) {
+    if (this.mode === 'free') {
+      const { center } = layout.bounds();
+      this.pointTarget.copy(center);
+      this.setOrbitFrom(center, -1.2, 1.2);
+      this.orbit.dist = Math.max(12, this.basePos.distanceTo(center));
+      this.vel.set(0, 0, 0);
+      this.mode = 'point';
+    }
+    this.orbit.thetaVel -= dx * 0.0055 * 6;
+    this.orbit.phiVel += dy * 0.0055 * 6;
+  }
+
+  /** Pincer : avancer ou reculer d'une fraction de la distance, sans élan (ratio > 1 = doigts écartés = s'approcher) */
+  pinchZoom(ratio: number) {
+    if (!(ratio > 0)) return;
+    if (this.mode === 'free') {
+      let minD = Infinity;
+      for (const n of layout.list) minD = Math.min(minD, n.render.distanceTo(this.basePos) - n.radius);
+      if (!Number.isFinite(minD)) minD = 40;
+      const fwd = this.v1.set(0, 0, -1).applyQuaternion(this.baseQuat);
+      this.basePos.addScaledVector(fwd, Math.max(4, minD) * (1 - 1 / ratio));
+      this.vel.multiplyScalar(0.5);
+    } else {
+      const node = this.mode === 'focus' && this.focusId ? layout.nodes.get(this.focusId) : null;
+      const min = node ? node.radius * 1.5 : 12;
+      this.orbit.dist = THREE.MathUtils.clamp(this.orbit.dist / ratio, min, 1200);
+    }
+  }
+
   click(shift = false) {
     if (overlayOpen()) return;
     const ui = useUI.getState();
@@ -215,11 +247,105 @@ class Rig {
     else if (ui.selectedId) ui.closePanel();
   }
 
+  /** Neurone sous le pointeur (rayon élargi pour un doigt) */
+  pick(scale = 1): string | null {
+    this.ray.setFromCamera(this.mouse, this.cam);
+    const ray = this.ray.ray;
+    let best = Infinity;
+    let hit: string | null = null;
+    for (const n of layout.list) {
+      if (n.vis < 0.05 || n.birth < 0.5) continue;
+      const toC = this.v3.subVectors(n.render, ray.origin);
+      const along = toC.dot(ray.direction);
+      if (along < 0.5) continue;
+      const d2 = toC.lengthSq() - along * along;
+      const r = Math.max(n.glyph * 1.9 + 0.6, along * 0.014) * scale;
+      if (d2 < r * r && along < best) {
+        best = along;
+        hit = n.id;
+      }
+    }
+    return hit;
+  }
+
   attach(el: HTMLElement) {
     this.el = el;
     const inUI = (t: EventTarget | null) => !!(t as HTMLElement | null)?.closest?.('[data-ui]');
+
+    // ── au doigt (téléphone, tablette) : un doigt = tourner · pincer = avancer / reculer · deux doigts = se déplacer
+    //    toucher = ouvrir le neurone (ou refermer) · double toucher dans le vide = vue d'ensemble
+    const touches = new Map<number, { x: number; y: number }>();
+    let pinch: { d: number; mx: number; my: number } | null = null;
+    let tap: { t: number; moved: number } | null = null;
+    let lastTap = 0;
+    let lastTouchAt = 0;
+    const two = () => {
+      const [a, b] = [...touches.values()];
+      return { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+    };
+    const touchDown = (e: PointerEvent) => {
+      lastTouchAt = performance.now();
+      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (touches.size === 1) tap = { t: performance.now(), moved: 0 };
+      else {
+        tap = null;
+        if (touches.size === 2) pinch = two();
+      }
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+    };
+    const touchMove = (e: PointerEvent) => {
+      const p = touches.get(e.pointerId);
+      if (!p) return;
+      lastTouchAt = performance.now();
+      const dx = e.clientX - p.x;
+      const dy = e.clientY - p.y;
+      p.x = e.clientX;
+      p.y = e.clientY;
+      if (touches.size === 1) {
+        if (tap) tap.moved += Math.abs(dx) + Math.abs(dy);
+        if (!tap || tap.moved > 8) this.touchOrbit(dx, dy);
+      } else if (touches.size === 2 && pinch) {
+        const now = two();
+        if (pinch.d > 10) this.pinchZoom(now.d / pinch.d);
+        const mx = now.mx - pinch.mx;
+        const my = now.my - pinch.my;
+        if (Math.abs(mx) + Math.abs(my) > 0.5) this.pan(mx, my);
+        pinch = now;
+      }
+    };
+    const touchUp = (e: PointerEvent) => {
+      if (!touches.has(e.pointerId)) return;
+      lastTouchAt = performance.now();
+      touches.delete(e.pointerId);
+      try {
+        el.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      if (touches.size < 2) pinch = null;
+      if (touches.size === 0 && tap && e.type === 'pointerup' && tap.moved < 10 && performance.now() - tap.t < 450) {
+        const r = el.getBoundingClientRect();
+        this.mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -(((e.clientY - r.top) / r.height) * 2 - 1));
+        const hit = overlayOpen() ? null : this.pick(1.8);
+        useUI.getState().setHovered(hit);
+        const now = performance.now();
+        if (!hit && now - lastTap < 350) this.overview();
+        lastTap = now;
+        this.click();
+      }
+      if (touches.size === 0) tap = null;
+    };
+
     const onDown = (e: PointerEvent) => {
       if (inUI(e.target)) return;
+      if (e.pointerType === 'touch') {
+        if ((e.target as HTMLElement).closest('[data-label]')) return;
+        return touchDown(e);
+      }
       if (e.button === 0 && (e.target as HTMLElement).closest('[data-label]')) return;
       this.drag = { button: e.button, x: e.clientX, y: e.clientY, moved: 0 };
       try {
@@ -229,6 +355,7 @@ class Rig {
       }
     };
     const onMove = (e: PointerEvent) => {
+      if (e.pointerType === 'touch') return touchMove(e);
       const r = el.getBoundingClientRect();
       this.mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -(((e.clientY - r.top) / r.height) * 2 - 1));
       this.pointerIn = !inUI(e.target);
@@ -243,6 +370,7 @@ class Rig {
       else if (d.moved > 4) this.pan(dx, dy);
     };
     const onUp = (e: PointerEvent) => {
+      if (e.pointerType === 'touch') return touchUp(e);
       const d = this.drag;
       this.drag = null;
       try {
@@ -262,6 +390,8 @@ class Rig {
     };
     const onDbl = (e: MouseEvent) => {
       if (inUI(e.target)) return;
+      // au doigt, le double toucher est déjà géré (le navigateur imite ensuite un double clic)
+      if (performance.now() - lastTouchAt < 800) return;
       if (!useUI.getState().hoveredId) this.overview();
     };
     const onLeave = () => {
@@ -397,34 +527,22 @@ class Rig {
     this.qf.setFromEuler(this.e.set(this.float.y * 0.022, -this.float.x * 0.032, 0, 'YXZ'));
     this.cam.quaternion.copy(this.baseQuat).multiply(this.qf);
 
-    // shift the projection when the side panel is open so the focused constellation stays visible
+    // shift the projection when the panel is open so the focused constellation stays visible:
+    // to the left beside the side panel on a computer, upward above the bottom sheet on a phone
     const panelOpen = !!ui.selectedId && ui.view === 'network' && !ui.editorId;
-    const shiftTarget = panelOpen ? Math.min(width * 0.2, 225) : 0;
+    const phone = width < 768;
+    const shiftTarget = panelOpen && !phone ? Math.min(width * 0.2, 225) : 0;
+    const shiftYTarget = panelOpen && phone ? height * 0.24 : 0;
     this.shift += (shiftTarget - this.shift) * (1 - Math.exp(-dt * 5));
-    if (Math.abs(this.shift) > 0.5) this.cam.setViewOffset(width, height, this.shift, 0, width, height);
+    this.shiftY += (shiftYTarget - this.shiftY) * (1 - Math.exp(-dt * 5));
+    if (Math.abs(this.shift) > 0.5 || Math.abs(this.shiftY) > 0.5) this.cam.setViewOffset(width, height, this.shift, this.shiftY, width, height);
     else if (this.cam.view?.enabled) this.cam.clearViewOffset();
     this.cam.updateMatrixWorld();
 
-    // picking: label hover wins, else ray vs constellation spheres
+    // picking: label hover wins, else ray vs constellation spheres (a finger picks on tap, in attach)
     if (!this.drag || this.drag.moved < 4) {
       let hit: string | null = labelHover.id;
-      if (!hit && this.pointerIn && !overlayOpen()) {
-        this.ray.setFromCamera(this.mouse, this.cam);
-        const ray = this.ray.ray;
-        let best = Infinity;
-        for (const n of layout.list) {
-          if (n.vis < 0.05 || n.birth < 0.5) continue;
-          const toC = this.v3.subVectors(n.render, ray.origin);
-          const along = toC.dot(ray.direction);
-          if (along < 0.5) continue;
-          const d2 = toC.lengthSq() - along * along;
-          const r = Math.max(n.glyph * 1.9 + 0.6, along * 0.014);
-          if (d2 < r * r && along < best) {
-            best = along;
-            hit = n.id;
-          }
-        }
-      }
+      if (!hit && this.pointerIn && !overlayOpen()) hit = this.pick();
       ui.setHovered(hit);
     }
     const cursor = this.drag && this.drag.moved > 4 ? 'grabbing' : ui.hoveredId ? 'pointer' : 'default';

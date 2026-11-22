@@ -199,7 +199,7 @@ const codeFrom = (s: string) => {
   return (m ? m[1] : s).trim();
 };
 
-export function AuthScreen({ hello, code: initialCode, codeInfo }: { hello: Hello; code?: string; codeInfo?: SignupInfo }) {
+export function AuthScreen({ hello, code: initialCode, codeInfo, linkError }: { hello: Hello; code?: string; codeInfo?: SignupInfo; linkError?: boolean }) {
   const reg = hello.server.registration;
   const creator = hello.server.creatorName || 'le créateur';
   const [tab, setTab] = useState<'login' | 'signup'>(initialCode ? 'signup' : 'login');
@@ -219,6 +219,11 @@ export function AuthScreen({ hello, code: initialCode, codeInfo }: { hello: Hell
       <div className="text-[14px] text-white/60 mt-2 leading-relaxed">
         Capture tes pensées sans effort, relie-les, retrouve-les en volant dans ton réseau. Seul, ou à plusieurs.
       </div>
+      {linkError && (
+        <div className="text-[12.5px] text-[rgb(var(--alert))] mt-4 leading-relaxed">
+          Ce QR code a expiré ou a déjà servi (il ne marche qu’une fois, 10 minutes). Affiches-en un nouveau sur ton ordinateur : ton prénom en haut à droite, puis « Sur ton téléphone ».
+        </div>
+      )}
       <div className="seg w-fit mt-6">
         <button data-on={tab === 'login' ? '1' : '0'} onClick={() => setTab('login')}>
           Se connecter

@@ -52,6 +52,23 @@ leurs comptes et leurs cerveaux restent (ils se reconnectent).
 Pour une adresse qui ne change jamais, ou un Synapse toujours en ligne :
 lis « METTRE-EN-LIGNE.txt ».
 
+Sur ton téléphone
+-----------------
+Synapse marche aussi sur téléphone, dans le navigateur, sans rien
+installer. Le téléphone se connecte à ton ordinateur (allumé, avec
+l'accès « Même Wi-Fi » ou « Depuis n'importe où » ouvert).
+- Ton cerveau sur ton téléphone : sur l'ordinateur, clique sur ton
+  prénom (en haut à droite) > « Sur ton téléphone » > Afficher le QR
+  code. Vise-le avec l'appareil photo du téléphone et touche le lien :
+  tu es connecté. Le code sert une fois, 10 minutes ; ne l'envoie à
+  personne. Tout se synchronise en direct entre les deux.
+- Le cerveau de quelqu'un : chaque invitation a un bouton « QR ».
+- Dans l'autre sens : depuis le téléphone, « Partager » marche aussi.
+- Au doigt : un doigt tourne autour du réseau, pincer avance ou recule,
+  deux doigts déplacent, toucher ouvre un neurone, double toucher dans
+  le vide revient à la vue d'ensemble.
+- Astuce : menu du navigateur > « Ajouter à l'écran d'accueil ».
+
 Inviter quelqu'un dans ton cerveau
 ----------------------------------
 1. Clique sur « Partager » (en haut à droite).
@@ -78,7 +95,6 @@ l'un à l'autre.
   déconnectée tout de suite).
 - « Arrêter tout partage » ferme les accès et déconnecte tout le monde.
 - Rien n'est enregistré sur l'ordinateur de tes invités.
-- Pour l'instant, Synapse s'utilise sur ordinateur (pas sur téléphone).
 
 L'espace créateur (réservé à toi, et aux admins que tu nommes)
 --------------------------------------------------------------

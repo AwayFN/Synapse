@@ -55,7 +55,7 @@ export interface Hello {
 export type Boot =
   | { kind: 'app' }
   | { kind: 'join'; token: string; info: InviteInfo; hello: Hello }
-  | { kind: 'auth'; hello: Hello; code?: string; codeInfo?: SignupInfo }
+  | { kind: 'auth'; hello: Hello; code?: string; codeInfo?: SignupInfo; linkError?: boolean }
   | { kind: 'setup'; hello: Hello; token: string | null }
   | { kind: 'reset'; hello: Hello; token: string; info: { ok: boolean; name?: string; email?: string } }
   | { kind: 'maintenance'; hello: Hello }
@@ -93,7 +93,25 @@ export async function bootstrap(): Promise<Boot> {
   const code = frag.get('inscription');
   const reset = frag.get('reinit');
   const setup = frag.get('installation');
+  const device = frag.get('connexion');
   const want = new URLSearchParams(location.search).get('cerveau');
+
+  // QR code affiché sur un autre appareil : on entre directement dans le compte (lien à usage unique)
+  let linkError = false;
+  if (device) {
+    try {
+      const r = await fetch('/api/auth/device', {
+        method: 'POST',
+        headers: { 'X-Synapse': '1', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: device }),
+        credentials: 'same-origin',
+      });
+      linkError = !r.ok;
+    } catch {
+      linkError = true;
+    }
+    history.replaceState(null, '', '/');
+  }
 
   let h = await hello(want);
   if (!h) return { kind: 'app' };
@@ -142,7 +160,7 @@ export async function bootstrap(): Promise<Boot> {
     history.replaceState(null, '', '/');
     h = (await hello(null)) ?? h;
   }
-  if (h.auth === 'none') return { kind: 'auth', hello: h };
+  if (h.auth === 'none') return { kind: 'auth', hello: h, linkError };
 
   const brain = h.brain!;
   setBrain(brain.id);

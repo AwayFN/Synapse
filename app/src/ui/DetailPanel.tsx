@@ -60,7 +60,7 @@ function Body({ e }: { e: Entity }) {
   return (
     <aside
       data-ui
-      className="fixed right-4 top-4 bottom-4 w-[440px] max-w-[calc(100vw-32px)] glass neon anim-panel flex flex-col z-20"
+      className="fixed right-4 top-4 bottom-4 w-[440px] max-w-[calc(100vw-32px)] glass neon anim-panel flex flex-col z-20 max-md:left-2 max-md:right-2 max-md:top-auto max-md:bottom-2 max-md:h-[62vh] max-md:w-auto max-md:max-w-none"
       style={natureVar(nature)}
     >
       <Corners />

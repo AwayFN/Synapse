@@ -21,6 +21,17 @@ Synapse s'ouvre dans sa propre fenêtre. Ton cerveau est enregistré sur ton ord
 - **Un langage visuel qui a du sens** : chaque pensée est un neurone néon. Sa couleur dit sa nature (cyan pensées, ambre actions, menthe moments, violet références), ses branches ses liens, son éclat sa vitalité. Ce qui est terminé s'éteint, ce qui est en retard grésille, et des impulsions voyagent d'un neurone à l'autre.
 - **Quatre vues** : le réseau 3D, le flux, l'agenda, les tâches.
 
+## Sur ton téléphone
+
+Synapse marche aussi sur téléphone, dans le navigateur, sans rien installer :
+
+- **Ton propre cerveau** : sur ton ordinateur, clique sur ton prénom (en haut à droite) → **Sur ton téléphone**, puis vise le QR code avec l'appareil photo de ton téléphone. Tu es connecté, et tout se synchronise en direct entre l'ordinateur et le téléphone.
+- **Le cerveau de quelqu'un d'autre** : chaque invitation a un bouton **QR** à viser, ou un lien à ouvrir.
+- **Dans l'autre sens** : depuis ton téléphone, tu peux aussi partager ton cerveau (bouton **Partager**) et l'ouvrir sur un ordinateur.
+- **Au doigt** : un doigt pour tourner autour du réseau, pincer pour avancer ou reculer, deux doigts pour te déplacer, toucher un neurone pour l'ouvrir.
+
+Le téléphone se connecte à l'ordinateur qui fait tourner Synapse : il doit être allumé, avec l'accès **même Wi-Fi** (à la maison) ou **depuis n'importe où** (partout) ouvert.
+
 ## Partager ton cerveau
 
 Bouton **Partager**, en haut à droite :
@@ -44,7 +55,7 @@ Pour un Synapse toujours accessible, sans ton ordinateur : voir [METTRE-EN-LIGNE
 
 ## Pour l'instant
 
-- Le lanceur est fait pour Windows.
-- Synapse s'utilise sur ordinateur : la navigation 3D n'est pas encore adaptée au téléphone.
+- Le lanceur est fait pour Windows (le téléphone, lui, se connecte à ton ordinateur).
+- Sur téléphone, l'espace créateur fonctionne, mais il est plus confortable sur un grand écran.
 
 Le mode d'emploi complet est dans [LISEZ-MOI.txt](LISEZ-MOI.txt), et dans l'application (touche `?`).

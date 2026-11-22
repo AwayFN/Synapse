@@ -814,6 +814,22 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       return send(200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
     }
 
+    // ── connexion d'un autre appareil (téléphone) par le QR code créé sur un appareil déjà connecté
+    if (pathname === '/api/auth/device') {
+      if (mustPost()) return;
+      if (!limit.login.hit(w.ip)) return send(429, { error: 'trop de tentatives' });
+      const r = accounts.loginLink(body.token);
+      if (!r) return send(400, { error: 'invalid' });
+      if (r.account.status === 'suspendu') return send(403, { error: 'suspended' });
+      if (settings.d.maintenance.on && !isStaff(r.account)) return send(503, { error: 'maintenance' });
+      accounts.consumeLoginLink(r.hash);
+      const token = accounts.newSession(r.account.id, { ua: req.headers['user-agent'], via: w.via });
+      tele.bump('log');
+      tele.active(r.account.id);
+      tele.event('connexion', `connexion de ${r.account.name || 'créateur'} sur un autre appareil (QR code)`, r.account, maskIp(w.ip));
+      return send(200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
+    }
+
     // ── retours (idées, problèmes) : comptes et invités
     if (pathname === '/api/feedback') {
       if (mustPost()) return;
@@ -873,6 +889,11 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
           if (changes.includes('nom')) renameEverywhere(a);
           if (changes.length) tele.event('compte', `${a.name || 'créateur'} a modifié son compte (${changes.join(', ')})`, a);
           return send(200, { ok: true, account: accountSelf(a, w) });
+        }
+        case '/api/account/device-link': {
+          const token = accounts.createLoginLink(a.id);
+          tele.event('compte', `${a.name || 'créateur'} a affiché un QR code pour se connecter sur un autre appareil`, a);
+          return send(200, { token, expiresIn: 600 });
         }
         case '/api/account/logout-all': {
           const n = accounts.endAll(a.id, w.sessionHash);

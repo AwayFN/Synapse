@@ -4,6 +4,7 @@ import { linkBases, ROLE_HINT, ROLE_LABEL, useSession, type Invite, type MemberD
 import { fmtRelative } from '../lib/time';
 import { ALERT_HEX } from '../lib/kinds';
 import { Corners, cvar, Kbd } from './common';
+import { QrCode } from './Qr';
 import { useAllTags } from './TagBar';
 
 type GuestRole = Exclude<Role, 'owner'>;
@@ -62,13 +63,27 @@ function CopyButton({ text, label = 'Copier' }: { text: string; label?: string }
 function LinkRow({ base, token, name }: { base: { label: string; url: string }; token: string; name?: string }) {
   const link = `${base.url}/#invite=${token}`;
   const owner = useSession((s) => s.ownerName);
+  const [qr, setQr] = useState(false);
   const message = `${name ? `${name}, ` : ''}rejoins mon second cerveau Synapse : ${link}\n— ${owner}`;
   return (
-    <div className="flex items-center gap-2 min-w-0">
-      <span className="xs-label w-[78px] flex-none">{base.label}</span>
-      <input readOnly value={link} className="field field-mono !text-[11px] !py-1.5 flex-1 min-w-0" onFocus={(e) => e.currentTarget.select()} />
-      <CopyButton text={link} label="Copier le lien" />
-      <CopyButton text={message} label="Copier un message" />
+    <div className="flex flex-col gap-2 min-w-0">
+      <div className="flex items-center gap-2 min-w-0 flex-wrap">
+        <span className="xs-label w-[78px] flex-none">{base.label}</span>
+        <input readOnly value={link} className="field field-mono !text-[11px] !py-1.5 flex-1 min-w-[160px]" onFocus={(e) => e.currentTarget.select()} />
+        <CopyButton text={link} label="Copier le lien" />
+        <CopyButton text={message} label="Copier un message" />
+        <button className={`btn !py-1 !px-2 !text-[9.5px] flex-none ${qr ? '!text-white' : ''}`} title="Pour un téléphone : viser le code avec l'appareil photo" onClick={() => setQr((x) => !x)}>
+          QR
+        </button>
+      </div>
+      {qr && (
+        <div className="flex items-center gap-4 pl-[86px] max-md:pl-0 anim-pop">
+          <QrCode text={link} size={168} label="QR code de l'invitation" />
+          <span className="text-[11.5px] text-white/50 leading-relaxed max-w-[260px]">
+            La personne vise ce code avec l’appareil photo de son téléphone et touche le lien : elle entre dans ton cerveau.
+          </span>
+        </div>
+      )}
     </div>
   );
 }

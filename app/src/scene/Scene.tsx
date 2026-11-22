@@ -92,7 +92,8 @@ function World() {
 }
 
 export function Scene() {
-  const [dpr, setDpr] = useState(Math.min(window.devicePixelRatio || 1, 1.75));
+  // sur téléphone, un peu moins de pixels : l'écran est petit, la batterie compte
+  const [dpr, setDpr] = useState(Math.min(window.devicePixelRatio || 1, window.innerWidth < 768 ? 1.5 : 1.75));
   return (
     <Canvas
       frameloop="never"

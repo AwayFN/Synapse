@@ -4,6 +4,7 @@ import { deName, initialsOf, linkBases, ROLE_LABEL, SERVER_ROLE_LABEL, useSessio
 import { useUI } from '../store/ui';
 import { ALERT_HEX } from '../lib/kinds';
 import { Corners, cvar, Kbd } from './common';
+import { QrCode } from './Qr';
 
 function copy(text: string) {
   return navigator.clipboard.writeText(text).catch(() => {
@@ -55,14 +56,14 @@ export function AccountChip() {
           title="Espace créateur : comptes, statistiques, retours, réglages"
           onClick={() => useSession.setState({ adminOpen: true })}
         >
-          <span className="text-white">◈</span> Espace créateur
+          <span className="text-white">◈</span> <span className="max-md:hidden">Espace créateur</span>
           {pending > 0 && <span className="mono text-[9px] px-1.5 rounded-full bg-[rgb(var(--alert)/0.25)] text-white">{pending}</span>}
         </button>
       )}
-      <button className="glass flex items-center gap-2 pl-1.5 pr-3 py-1 hover:border-white/20" title="Mon compte, mes cerveaux" onClick={() => useSession.setState({ accountOpen: true })}>
+      <button className="glass flex items-center gap-2 pl-1.5 pr-3 py-1 max-md:pr-1.5 hover:border-white/20" title="Mon compte, mes cerveaux" onClick={() => useSession.setState({ accountOpen: true })}>
         <span className="w-6 h-6 rounded-full border border-white/50 flex items-center justify-center mono text-[9px] text-white/85">{initialsOf(name || '?')}</span>
-        <span className="text-[11.5px] text-white/80 max-w-[140px] truncate">{name}</span>
-        <span className="text-white/35 text-[9px]">▾</span>
+        <span className="text-[11.5px] text-white/80 max-w-[140px] truncate max-md:hidden">{name}</span>
+        <span className="text-white/35 text-[9px] max-md:hidden">▾</span>
       </button>
     </div>
   );
@@ -207,6 +208,72 @@ function InviteFriend() {
           {base?.label === 'Internet' && <div className="text-[11px] text-white/38">Adresse temporaire : elle change si Synapse redémarre sur ton PC.</div>}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Ouvrir son propre Synapse sur son téléphone : un QR code à viser, valable 10 minutes, une seule fois */
+function PhoneLink() {
+  const [url, setUrl] = useState<string | null>(null);
+  const [label, setLabel] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const make = async () => {
+    setError(null);
+    const base = linkBases()[0];
+    if (!base) {
+      setError('Ouvre d’abord un accès avec le bouton Partager : « Même Wi-Fi » si ton téléphone est à la maison, ou « Depuis n’importe où » pour partout.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await api<{ token: string }>('/api/account/device-link', {});
+      setUrl(`${base.url}/#connexion=${r.token}`);
+      setLabel(base.label);
+    } catch {
+      setError('Impossible pour l’instant. Réessaie.');
+    }
+    setBusy(false);
+  };
+  if (!url) {
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="text-[12px] text-white/50 leading-relaxed">
+          Retrouve ton cerveau sur ton téléphone, en direct avec ton ordinateur : un QR code à viser avec l’appareil photo, et tu es connecté. Rien à installer.
+        </div>
+        <button className="btn btn-primary w-fit" disabled={busy} onClick={() => void make()}>
+          Afficher le QR code
+        </button>
+        {error && <div className="text-[12px] text-[rgb(var(--alert))]">{error}</div>}
+      </div>
+    );
+  }
+  return (
+    <div className="flex gap-5 items-start flex-wrap anim-pop">
+      <QrCode text={url} size={188} label="QR code de connexion pour ton téléphone" />
+      <div className="flex-1 min-w-[220px] flex flex-col gap-2.5 text-[12.5px] text-white/65 leading-relaxed">
+        <span>
+          Vise ce code avec l’appareil photo de ton téléphone, puis touche le lien qui apparaît : Synapse s’ouvre, déjà connecté à ton compte.
+        </span>
+        <span className="text-white/45">
+          {label === 'Même Wi-Fi'
+            ? 'Ton téléphone doit être connecté au même Wi-Fi que cet ordinateur.'
+            : label === 'Internet'
+              ? 'Marche partout (4G, autre Wi-Fi) tant que ton ordinateur est allumé.'
+              : 'Marche partout où cette adresse est joignable.'}{' '}
+          Valable 10 minutes, une seule fois. Ne l’envoie à personne : il ouvre ton compte.
+        </span>
+        <span className="text-white/40">Astuce : sur le téléphone, menu du navigateur → « Ajouter à l’écran d’accueil » pour l’ouvrir comme une appli.</span>
+        <span className="mono text-[10px] text-white/35 break-all" data-qr-url>
+          {url}
+        </span>
+        <div className="flex gap-2">
+          <CopyButton text={url} label="Copier le lien" />
+          <button className="btn btn-ghost !py-1 !px-2 !text-[9.5px]" onClick={() => void make()}>
+            Nouveau code
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -378,6 +445,9 @@ export function AccountPanel() {
 
         {account && (
           <>
+            <Section title="Sur ton téléphone">
+              <PhoneLink />
+            </Section>
             <Section title="Inviter un ami sur Synapse">
               <InviteFriend />
             </Section>

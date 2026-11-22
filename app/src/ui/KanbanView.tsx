@@ -190,7 +190,7 @@ function Kanban() {
           </div>
         </div>
 
-        <div className="flex-1 grid grid-cols-3 gap-4 min-h-0 pointer-events-auto">
+        <div className="flex-1 grid grid-cols-3 gap-4 min-h-0 pointer-events-auto kanban-cols max-md:flex max-md:overflow-x-auto max-md:snap-x max-md:snap-mandatory max-md:gap-3">
           {COLUMNS.map((col) => {
             const items = visible.filter((t) => t.status === col.status).sort((a, b) => a.order - b.order);
             const over = !!drag?.active && drop?.status === col.status;
@@ -198,7 +198,7 @@ function Kanban() {
               <div
                 key={col.status}
                 data-col={col.status}
-                className={`glass neon flex flex-col min-h-0 transition-shadow ${over ? 'shadow-[0_0_40px_rgb(var(--c)/0.14)]' : ''}`}
+                className={`glass neon flex flex-col min-h-0 transition-shadow max-md:min-w-[84vw] max-md:snap-center ${over ? 'shadow-[0_0_40px_rgb(var(--c)/0.14)]' : ''}`}
                 style={cvar(col.color)}
               >
                 <Corners />
