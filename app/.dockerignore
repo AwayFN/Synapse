@@ -1,0 +1,6 @@
+# seul ce qui sert au serveur part chez l'hébergeur : dist/ (l'application compilée) et scripts/
+*
+!dist
+!dist/**
+!scripts
+!scripts/**

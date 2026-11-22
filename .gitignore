@@ -1,0 +1,7 @@
+# Composants installés par npm : énormes, et recréés automatiquement si besoin
+app/node_modules/
+# Outils de développement (aperçu local)
+.claude/
+# Fichiers temporaires
+*.log
+*.tmp
