@@ -2,7 +2,7 @@
 
 **Ton réseau personnel, en 3D.** Projets, tâches, notes et créneaux, tous reliés : tu voles au milieu de tes idées, et tu retrouves tout par les liens. Seul, ou à plusieurs.
 
-![Le réseau de Synapse : chaque projet, tâche, note et créneau est une constellation néon, reliée aux autres](apercu.jpg)
+![Le réseau de Synapse : chaque projet, tâche, note et créneau est une constellation néon, reliée aux autres](apercus/reseau.jpg)
 
 ## Télécharger et lancer (Windows)
 
@@ -23,6 +23,14 @@ Si Windows demande « Voulez-vous exécuter ce fichier ? », clique **Exécuter*
 - **Les tâches** : un tableau à faire / en cours / fait.
 - **Tout se relie** : « + Lier à… » dans chaque fiche et en haut de chaque note relie une note, une tâche, un projet ou un créneau à n’importe quel autre.
 - `Ctrl+K` pour créer ou chercher en une phrase : `tâche Appeler Léa @Projet_App demain 14h`, `créneau 12h01-17h38 Deep work @App`.
+
+**L’emploi du temps**, une semaine en grille (touche `Tab`) :
+
+![L’emploi du temps : la semaine en grille, chaque créneau avec son projet et sa durée](apercus/emploi-du-temps.jpg)
+
+**Une note**, sur presque tout l’écran (`Ctrl+N`) :
+
+![Une note ouverte en grand, comme le Bloc-notes, avec la barre d’état en bas](apercus/note.jpg)
 
 ## Partager ton cerveau
 
