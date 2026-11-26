@@ -11,7 +11,11 @@ name: Application Android
 
 on:
   push:
+    # une étiquette v… : nouvelle version publiée
     tags: ['v*']
+    # une modification de l'application Android : construction d'essai (sans publication)
+    branches: ['**']
+    paths: ['android/**', '.github/workflows/android.yml', 'app/central.json']
   workflow_dispatch:
 
 permissions:
