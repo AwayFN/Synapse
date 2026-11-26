@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, ApiError, clientId, openBrain, pendingChanges, retrySync, syncInfo } from '../sync/client';
 import { deName, initialsOf, linkBases, ROLE_LABEL, SERVER_ROLE_LABEL, useSession } from '../sync/session';
 import { android, androidDownloadUrl, copyText, isAndroidApp, openExternal, releasesUrl } from '../sync/native';
-import { setSessionToken, standalone } from '../sync/remote';
+import { deviceWord, localFirst, relayClient, setSessionToken, standalone } from '../sync/remote';
 import { forgetBrain, forgetEverything } from '../sync/offline';
 import { useUI } from '../store/ui';
 import { ALERT_HEX } from '../lib/color';
@@ -14,14 +14,14 @@ import { ServerAddress } from './Gate';
 
 /**
  * Se déconnecter (sur ce PC aussi) : il faudra se reconnecter avec son e-mail et son mot de passe.
- * Dans l'application Android, rien de ce compte ne reste sur le téléphone (tout est sur le Synapse central).
+ * Sur le téléphone et sur un PC « client », rien de ce compte ne reste sur l'appareil (tout est sur le Synapse central).
  */
 export async function logout() {
   const waiting = pendingChanges();
   if (
     waiting > 0 &&
     !window.confirm(
-      standalone()
+      localFirst()
         ? `${waiting} modification${waiting > 1 ? 's' : ''} n’${waiting > 1 ? 'ont' : 'a'} pas encore pu partir vers le Synapse central (il ne répond pas). Se déconnecter quand même ? ${waiting > 1 ? 'Elles seraient perdues' : 'Elle serait perdue'}.`
         : 'Des modifications n’ont pas encore pu partir (connexion coupée). Se déconnecter quand même ? Elles seraient perdues.',
     )
@@ -33,7 +33,7 @@ export async function logout() {
   } catch {
     /* pas grave */
   }
-  if (standalone()) {
+  if (localFirst()) {
     forgetEverything();
     setSessionToken(null);
   }
@@ -81,7 +81,7 @@ const errText = (e: unknown, map: Record<string, string>) => {
 /** Application Android : un point dans la pastille du compte (vert : synchronisé · orange : hors ligne, ça attend) */
 function SyncDot() {
   const s = useSyncState();
-  if (!standalone()) return null;
+  if (!localFirst()) return null;
   const ok = s.online && !s.pending && !s.outdated;
   const title = s.outdated
     ? 'Synchronisation en pause : une autre version de Synapse de l’autre côté'
@@ -89,7 +89,7 @@ function SyncDot() {
       ? s.pending
         ? 'Envoi en cours…'
         : 'Synchronisé avec le Synapse central'
-      : `Hors ligne : tout est gardé sur ce téléphone${s.pending ? ` (${s.pending} modification${s.pending > 1 ? 's' : ''} à envoyer)` : ''}`;
+      : `Hors ligne : tout est gardé sur ce ${deviceWord()}${s.pending ? ` (${s.pending} modification${s.pending > 1 ? 's' : ''} à envoyer)` : ''}`;
   return (
     <span
       className={`w-2 h-2 rounded-full flex-none ${ok ? 'bg-[#39ff88] shadow-[0_0_6px_#39ff88]' : 'bg-[#ffb020] shadow-[0_0_6px_#ffb020] breathe'}`}
@@ -278,7 +278,7 @@ function InviteFriend() {
 function SyncStatus() {
   const s = useSyncState();
   const n = s.pending;
-  const waiting = n ? ` ${n} modification${n > 1 ? 's' : ''} attend${n > 1 ? 'ent' : ''} sur ce téléphone et partir${n > 1 ? 'ont' : 'a'} toute${n > 1 ? 's' : ''} seule${n > 1 ? 's' : ''}.` : '';
+  const waiting = n ? ` ${n} modification${n > 1 ? 's' : ''} attend${n > 1 ? 'ent' : ''} sur ce ${deviceWord()} et partir${n > 1 ? 'ont' : 'a'} toute${n > 1 ? 's' : ''} seule${n > 1 ? 's' : ''}.` : '';
   return (
     <div className="glass p-3 flex flex-col gap-2" data-sync-status>
       <div className="flex items-center gap-2">
@@ -289,12 +289,12 @@ function SyncStatus() {
       </div>
       <div className="text-[12px] text-white/55 leading-relaxed">
         {s.outdated === 'app'
-          ? 'Une nouvelle version de l’application est sortie : installe-la pour synchroniser de nouveau.'
+          ? `Une nouvelle version ${standalone() ? 'de l’application' : 'de Synapse'} est sortie : installe-la pour synchroniser de nouveau.`
           : s.outdated === 'serveur'
             ? 'Le Synapse central n’est pas encore à jour (sur le PC du créateur : « Lancer Synapse »).'
             : s.online
-              ? 'Tout ce que tu fais ici apparaît en direct sur tes autres appareils (ton PC…), et l’inverse.'
-              : `Le Synapse central ne répond pas pour l’instant${s.offlineSince ? ` (depuis ${fmtRelative(s.offlineSince - Date.now()).replace(/^il y a /, '')})` : ''} : l’ordinateur qui l’héberge est peut-être éteint, ou le téléphone n’a pas de réseau. Continue comme d’habitude : tout est gardé sur ce téléphone.${waiting}`}
+              ? `Tout ce que tu fais ici apparaît en direct sur tes autres appareils (${standalone() ? 'ton PC' : 'ton téléphone'}…), et l’inverse.`
+              : `Le Synapse central ne répond pas pour l’instant${s.offlineSince ? ` (depuis ${fmtRelative(s.offlineSince - Date.now()).replace(/^il y a /, '')})` : ''} : l’ordinateur qui l’héberge est peut-être éteint, ou ce ${deviceWord()} n’a pas de réseau. Continue comme d’habitude : tout est gardé sur ce ${deviceWord()}.${waiting}`}
         {s.online && waiting}
       </div>
       {!s.online && !s.outdated && (
@@ -546,8 +546,8 @@ function DangerZone() {
                 setError(null);
                 try {
                   await api('/api/account/delete', { confirm, password });
-                  // application Android : plus rien de ce compte sur le téléphone
-                  if (standalone()) {
+                  // téléphone ou PC « client » : plus rien de ce compte sur l'appareil
+                  if (localFirst()) {
                     forgetEverything();
                     setSessionToken(null);
                   }
@@ -600,6 +600,18 @@ export function AccountPanel() {
         <Section title="Rejoindre le cerveau d’un ami">
           <JoinFriend />
         </Section>
+
+        {account && relayClient() && (
+          <Section title="Synchronisation">
+            <div className="flex flex-col gap-3">
+              <div className="text-[12px] text-white/55 leading-relaxed">
+                Synapse marche sur ce PC même sans connexion : ton cerveau y est gardé, et se synchronise avec ton compte dès que le Synapse central répond.
+                Sur ton téléphone, connecte-toi avec le même e-mail : tu y retrouves tout.
+              </div>
+              <SyncStatus />
+            </div>
+          </Section>
+        )}
 
         {account && (
           <>

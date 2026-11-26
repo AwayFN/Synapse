@@ -152,40 +152,42 @@ class Rig {
   }
 
   /**
-   * Vue d'ensemble : revenir aux neurones. De très loin, on ne refait pas tout le trajet : un saut juste à côté
-   * du réseau (dans la direction d'où l'on vient, déjà tourné vers lui), puis un vol court. Presque instantané.
+   * Vue d'ensemble (double-clic ou double toucher dans le vide, touche H) : le vol en douceur, comme toujours.
+   * instant (le bouton « revenir aux neurones ») : de très loin, on ne refait pas tout le trajet : un saut juste à
+   * côté du réseau (dans la direction d'où l'on vient, déjà tourné vers lui), puis un vol court. Presque instantané.
    */
-  overview(fast = false) {
+  overview(instant = false) {
     const { center, radius } = layout.bounds();
     const fit = this.fitDistance(radius);
-    const far = this.basePos.distanceTo(center) > fit * 1.6;
-    if (far) {
-      const dir = this.v1.subVectors(this.basePos, center);
-      if (dir.lengthSq() < 1e-6) dir.set(0, 0.3, 1);
-      dir.normalize();
-      // ni par-dessus ni par-dessous : on revient à hauteur du réseau
-      dir.y = THREE.MathUtils.clamp(dir.y, -0.45, 0.6);
-      dir.normalize();
-      this.basePos.copy(center).addScaledVector(dir, fit * 1.35);
-      this.m.lookAt(this.basePos, center, UP);
-      this.baseQuat.setFromRotationMatrix(this.m);
-      this.float.set(0, 0);
-      // un bref fondu masque le saut
-      const canvas = this.el?.querySelector('canvas');
-      try {
-        canvas?.animate([{ opacity: 0.12 }, { opacity: 1 }], { duration: 420, easing: 'ease-out' });
-      } catch {
-        /* pas d'animation : le saut reste net */
+    if (instant) {
+      if (this.basePos.distanceTo(center) > fit * 1.6) {
+        const dir = this.v1.subVectors(this.basePos, center);
+        if (dir.lengthSq() < 1e-6) dir.set(0, 0.3, 1);
+        dir.normalize();
+        // ni par-dessus ni par-dessous : on revient à hauteur du réseau
+        dir.y = THREE.MathUtils.clamp(dir.y, -0.45, 0.6);
+        dir.normalize();
+        this.basePos.copy(center).addScaledVector(dir, fit * 1.35);
+        this.m.lookAt(this.basePos, center, UP);
+        this.baseQuat.setFromRotationMatrix(this.m);
+        this.float.set(0, 0);
+        // un bref fondu masque le saut
+        const canvas = this.el?.querySelector('canvas');
+        try {
+          canvas?.animate([{ opacity: 0.12 }, { opacity: 1 }], { duration: 420, easing: 'ease-out' });
+        } catch {
+          /* pas d'animation : le saut reste net */
+        }
       }
+      this.vel.set(0, 0, 0);
+      this.yawVel = 0;
+      this.pitchVel = 0;
     }
-    this.vel.set(0, 0, 0);
-    this.yawVel = 0;
-    this.pitchVel = 0;
     this.pointTarget.copy(center);
     this.setOrbitFrom(center, 0.12, 0.6);
     this.orbit.dist = fit;
     this.mode = 'point';
-    this.fast = fast || far;
+    this.fast = instant;
     this.focusId = null;
     if (useUI.getState().focusId) useUI.setState({ focusId: null });
   }

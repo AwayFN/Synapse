@@ -101,7 +101,7 @@ const NATURE_OF_TYPE = { project: 'action', task: 'action', note: 'pensee', slot
 
 const LIMITS = { '/api/import': 80_000_000, '/api/ops': 6_000_000, '/api/layout': 10_000_000 };
 
-export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = () => '', hosted: hostedOpt }) {
+export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = () => '', code = '', hosted: hostedOpt }) {
   const hosted = !!hostedOpt || process.env.SYNAPSE_HEBERGE === '1';
   const root = dataDir();
   const settings = new Settings(root, log);
@@ -1494,6 +1494,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
           app: 'synapse',
           mode: 'serveur',
           proto: PROTO,
+          code,
           pid: process.pid,
           root: dist,
           clients,

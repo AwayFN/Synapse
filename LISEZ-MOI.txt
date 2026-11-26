@@ -4,6 +4,9 @@
 Sur PC : double-clique sur « Lancer Synapse ».
 Sur téléphone Android : installe l'application (voir plus bas). Elle
 marche toute seule, sans PC, même sans réseau.
+Sur PC comme sur téléphone, Synapse marche sans connexion : ce que tu
+fais hors ligne part dès que la connexion revient, et arrive sur tes
+autres appareils (et l'inverse).
 Première ouverture : crée ton compte (prénom, e-mail, mot de passe), ou
 connecte-toi avec celui que tu as déjà (celui de ton téléphone, par
 exemple : tu retrouves tout).
@@ -65,8 +68,9 @@ Ce que tu y trouves
 - Tes projets, tâches, notes et créneaux, reliés dans un réseau en 3D
   où tu voles au milieu de tes idées (molette, clic droit, Z Q S D).
 - Trop loin dans l'espace ? Le petit bouton rond à côté de « Créer ·
-  chercher » (ou la touche H) te ramène devant tes neurones presque
-  instantanément. Il s'allume quand tu t'es éloigné.
+  chercher » te ramène devant tes neurones presque instantanément. Il
+  s'allume quand tu t'es éloigné. Le double-clic dans le vide fait
+  toujours la vue d'ensemble en douceur.
 - Écrire en grand : une note s'ouvre sur presque tout l'écran (comme le
   Bloc-notes), et la description d'une tâche, d'un projet ou d'un
   créneau aussi (« Écrire en grand » dans sa fiche). En bas : la ligne,
@@ -105,7 +109,8 @@ Le Synapse central
 Les comptes vivent sur un serveur : le Synapse central, sur le PC du
 créateur. Les applications (téléphones, autres PC) s'y synchronisent.
 - Ce PC a l'accès Internet ouvert (Espace admin > Serveur, ou bouton
-  « Partager »). Quand il est éteint, les téléphones continuent avec leur
+  « Partager »). Quand il est éteint, les téléphones et les autres PC
+  continuent avec leur
   copie du cerveau, et tout se synchronise dès qu'il revient.
 - Son adresse Internet gratuite change à chaque redémarrage de Synapse :
   il la publie tout seul sur GitHub (dépôt AwayFN/Synapse, branche
@@ -146,7 +151,8 @@ Tes données
 -----------
 - Sur le Synapse central : %APPDATA%\Synapse : un dossier par cerveau,
   avec une sauvegarde par jour (14 jours).
-- Sur le téléphone : une copie de ton cerveau, pour qu'il marche sans
+- Sur ton téléphone et tes autres PC : une copie de ton cerveau, pour
+  qu'il marche sans
   réseau (effacée à « Se déconnecter »).
 - Exporter : Ctrl+K, puis « Exporter mes données » (sur le téléphone : le
   fichier va dans Téléchargements).

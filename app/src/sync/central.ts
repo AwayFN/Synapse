@@ -1,4 +1,5 @@
 import { appInfo } from './native';
+import { setApiBase, standalone } from './remote';
 
 /**
  * Trouver le Synapse central (application Android). Son adresse Internet peut changer (adresse gratuite, nouvelle à
@@ -126,4 +127,42 @@ export function findCentral(opts: { quick?: boolean; timeoutMs?: number } = {}):
 /** Oublier l'adresse publiée lue il y a moins d'une minute (nouvel essai demandé) */
 export function forgetPublished() {
   published = { at: 0, url: null };
+}
+
+/** L'état du relais de ce PC (PC « client ») : a-t-il trouvé le Synapse central ? null : pas de relais ici */
+export interface RelayStatus {
+  mode?: string;
+  ok?: boolean;
+  upstream?: string | null;
+  depot?: string | null;
+  checkedAt?: number;
+  error?: string;
+}
+export async function relayStatus(timeoutMs = 2500): Promise<RelayStatus | null> {
+  const j = (await getJson('/__relais', timeoutMs)) as RelayStatus | null;
+  return j && j.mode === 'client' ? j : null;
+}
+
+/**
+ * Le Synapse central répond-il ? Sa version (proto), ou 0.
+ *   - téléphone : on le cherche (dernière adresse, GitHub…), et l'API part à l'adresse trouvée ;
+ *   - PC « client » : par le relais de ce PC (il cherche lui-même la bonne adresse).
+ */
+export async function reachCentral(): Promise<number> {
+  if (standalone()) {
+    const url = await findCentral();
+    if (!url) return 0;
+    setApiBase(url);
+    return healthy(url);
+  }
+  return healthy('');
+}
+
+/** PC « client » : demander au relais de chercher le Synapse central tout de suite (« Réessayer maintenant ») */
+export async function relayRetry(): Promise<void> {
+  try {
+    await fetch('/__relais/retry', { method: 'POST', headers: { 'X-Synapse': 'relais' }, cache: 'no-store' });
+  } catch {
+    /* le relais ne répond pas : rien à faire */
+  }
 }

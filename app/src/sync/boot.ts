@@ -4,8 +4,8 @@ import { api, setBrain, startSync } from './client';
 import { installErrorReporter } from './errors';
 import { android, appInfo } from './native';
 import { useSession, type Account, type BrainCard, type Role, type Scope, type ServerInfo } from './session';
-import { PROTO, apiUrl, requestInit, sessionToken, setApiBase, standalone } from './remote';
-import { findCentral, healthy, lastCentral } from './central';
+import { PROTO, apiUrl, localFirst, requestInit, sessionToken, setApiBase, setRelayClient, standalone } from './remote';
+import { findCentral, healthy, lastCentral, relayStatus } from './central';
 import { forgetEverything, hasSavedBrain, installBrainCache, loadBrain, loadSession, openSaved, saveSession, type SavedSession } from './offline';
 import { loadPending, startPendingLoop } from './pending';
 
@@ -17,13 +17,13 @@ import { loadPending, startPendingLoop } from './pending';
  *   - compte connecté → son cerveau, ou celui demandé (?cerveau=…) s'il y a accès
  *   - invité sans compte (cookie) → le cerveau qu'il a rejoint
  *   - sinon → créer son compte / se connecter (la toute première chose à faire)
- * Avec un serveur, rien n'est gardé dans le navigateur : le cerveau vit sur le serveur.
+ * Dans un navigateur, rien n'est gardé : le cerveau vit sur le serveur.
  *
- * L'application Android (V7) est différente : Synapse est dans le téléphone et marche sans serveur.
+ * Sur le téléphone (application Android V7) et sur un PC « client » (V7.1), Synapse marche sans connexion :
  *   - compte créé pendant que le Synapse central ne répondait pas → Synapse s'ouvre aussitôt, le compte sera
  *     enregistré dès qu'il répond (pending.ts) ;
- *   - le Synapse central répond → comme partout (et le cerveau est aussi gardé sur le téléphone) ;
- *   - il ne répond pas → le cerveau gardé sur le téléphone s'ouvre ; tout se synchronise dès qu'il revient ;
+ *   - le Synapse central répond → comme partout (et le cerveau est aussi gardé sur l'appareil) ;
+ *   - il ne répond pas → le cerveau gardé sur l'appareil s'ouvre ; tout se synchronise dès qu'il revient ;
  *   - première ouverture sans réseau → on crée quand même son compte, et on commence.
  */
 export { PROTO };
@@ -170,10 +170,17 @@ function openOffline(saved: SavedSession, outdated: 'app' | 'serveur' | null = n
 }
 
 /**
- * L'application Android : null = le Synapse central répond (la suite est la même que partout), sinon ce qu'il faut
- * ouvrir sans lui.
+ * Le compte gardé sur cet appareil. Téléphone : avec son jeton de session ; PC « client » : la session est un cookie
+ * que la page ne voit pas, la copie du compte suffit (elle disparaît à « Se déconnecter »).
  */
-async function bootApp(): Promise<Boot | null> {
+const savedHere = () => (standalone() && !sessionToken() ? null : loadSession());
+const pause = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
+
+/**
+ * Téléphone ou PC « client » : null = le Synapse central répond (la suite est la même que partout), sinon ce qu'il
+ * faut ouvrir sans lui.
+ */
+async function bootLocalFirst(): Promise<Boot | null> {
   // un compte créé sans réseau : Synapse s'ouvre tout de suite, et le compte s'enregistre dès que possible
   if (loadPending()) {
     setMemoryOnly(false);
@@ -182,8 +189,27 @@ async function bootApp(): Promise<Boot | null> {
     return { kind: 'app' };
   }
   const token = sessionToken();
-  const saved = token ? loadSession() : null;
+  const saved = savedHere();
   const canOffline = hasSavedBrain(saved);
+  if (!standalone()) {
+    // PC « client » : le relais de ce PC cherche le Synapse central ; au démarrage, on lui laisse quelques secondes
+    let rs = await relayStatus();
+    for (let i = 0; i < 12 && rs && !rs.ok && !rs.checkedAt; i++) {
+      await pause(500);
+      rs = await relayStatus();
+    }
+    const p = rs?.ok ? await healthy('', canOffline ? 3500 : 6000) : 0;
+    if (p === PROTO) return null;
+    if (p) {
+      if (canOffline) return openOffline(saved!, p > PROTO ? 'app' : 'serveur');
+      return { kind: 'unreachable', reason: p > PROTO ? 'version' : 'old-server' };
+    }
+    // il ne répond pas (PC du créateur éteint, pas de réseau) : le cerveau gardé sur ce PC, tout de suite
+    if (canOffline) return openOffline(saved!);
+    if (saved) return { kind: 'unreachable', reason: 'server' };
+    // personne ne répond : on crée quand même son compte, et on commence (il sera enregistré plus tard)
+    return { kind: 'auth', hello: offlineHello(), offline: true };
+  }
   // le cas habituel : le Synapse central répond à sa dernière adresse (vite, pour ne pas faire attendre)
   const last = lastCentral();
   if (last) {
@@ -218,9 +244,14 @@ async function bootApp(): Promise<Boot | null> {
 }
 
 export async function bootstrap(): Promise<Boot> {
-  const app = standalone();
+  // PC « client » : un relais sur ce PC sert l'application et transmet au Synapse central (V7.1 : hors ligne possible)
+  if (!standalone() && import.meta.env.PROD && ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) {
+    if (await relayStatus()) setRelayClient(true);
+  }
+  // téléphone ou PC « client » : Synapse s'ouvre même sans connexion
+  const app = localFirst();
   if (app) {
-    const early = await bootApp();
+    const early = await bootLocalFirst();
     if (early) return early;
   }
   const frag = new URLSearchParams(location.hash.replace(/^#/, ''));
@@ -255,9 +286,9 @@ export async function bootstrap(): Promise<Boot> {
     } catch {
       /* pas dans l'application */
     }
-    // application Android : il répondait il y a un instant ; avec son cerveau gardé ici, on l'ouvre quand même
+    // téléphone ou PC « client » : il répondait il y a un instant ; avec le cerveau gardé ici, on l'ouvre quand même
     if (app) {
-      const saved = sessionToken() ? loadSession() : null;
+      const saved = savedHere();
       if (hasSavedBrain(saved)) return openOffline(saved!);
     }
     return { kind: 'unreachable', reason: 'server' };

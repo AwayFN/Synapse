@@ -4,9 +4,10 @@ import { layout } from '../scene/layout';
 import { useUI } from '../store/ui';
 import { applySnapshot } from './ops';
 import { initialsOf, useSession, type Account, type BrainCard, type Member, type Role, type ServerInfo } from './session';
+import { standalone } from './remote';
 
 /**
- * Synapse sur le téléphone, même sans réseau (application Android V7).
+ * Synapse sur le téléphone (application Android V7) et sur un PC « client » (V7.1), même sans réseau.
  *
  * Le cerveau ouvert est gardé sur le téléphone (copie complète, mise à jour à chaque modification) avec ce qu'il faut
  * pour le rouvrir : le compte, ses cerveaux, le serveur. Sans réseau, ou quand le Synapse central ne répond pas (PC
@@ -61,7 +62,7 @@ function writeJson(key: string, value: unknown): boolean {
   } catch {
     if (!fullSaid) {
       fullSaid = true;
-      useUI.getState().toast({ text: 'STOCKAGE DU TÉLÉPHONE PLEIN · LA COPIE HORS LIGNE N’EST PLUS À JOUR', color: '#ff4d6d' }, 8000);
+      useUI.getState().toast({ text: `STOCKAGE ${standalone() ? 'DU TÉLÉPHONE' : 'DE CE PC'} PLEIN · LA COPIE HORS LIGNE N’EST PLUS À JOUR`, color: '#ff4d6d' }, 8000);
     }
     return false;
   }

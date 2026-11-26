@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { dropPending, loginInstead, retryPending, updatePending, usePending } from '../sync/pending';
 import { initialsOf } from '../sync/session';
-import { apiUrl } from '../sync/remote';
+import { apiUrl, deviceWord, standalone } from '../sync/remote';
 import { LEVEL, useBackLayer } from '../lib/back';
 import { fmtRelative } from '../lib/time';
 import { Corners, cvar } from './common';
@@ -72,7 +72,7 @@ function PendingPanel({ onClose }: { onClose: () => void }) {
     state === 'trying'
       ? 'Enregistrement en cours…'
       : state === 'waiting'
-        ? `Le Synapse central ne répond pas pour l’instant (l’ordinateur qui l’héberge est peut-être éteint, ou le téléphone n’a pas de réseau). Nouvel essai ${next > now ? fmtRelative(next - now) : 'dans un instant'}.`
+        ? `Le Synapse central ne répond pas pour l’instant (l’ordinateur qui l’héberge est peut-être éteint, ou ce ${deviceWord()} n’a pas de réseau). Nouvel essai ${next > now ? fmtRelative(next - now) : 'dans un instant'}.`
         : '';
   return (
     <div className="fixed inset-0 z-50 anim-fade" data-ui>
@@ -93,9 +93,9 @@ function PendingPanel({ onClose }: { onClose: () => void }) {
         <div className="glass p-3 mt-5 flex flex-col gap-2" style={cvar('#ffb020')}>
           <span className="hud text-[10px] text-[#ffb020]">{pending.registered ? 'Envoi de ton cerveau' : 'Compte en attente'}</span>
           <span className="text-[12.5px] text-white/65 leading-relaxed">
-            Tu peux utiliser Synapse normalement : tout est gardé sur ce téléphone. {pending.registered ? 'Ton compte est créé ; ' : 'Ton compte sera créé sur le Synapse central '}
-            {pending.registered ? 'ton cerveau partira ' : ''}dès qu’il répond, tout seul, avec tout ce que tu as fait ici. Ensuite, tu le retrouves sur ton PC en te connectant
-            avec {pending.email}.
+            Tu peux utiliser Synapse normalement : tout est gardé sur ce {deviceWord()}. {pending.registered ? 'Ton compte est créé ; ' : 'Ton compte sera créé sur le Synapse central '}
+            {pending.registered ? 'ton cerveau partira ' : ''}dès qu’il répond, tout seul, avec tout ce que tu as fait ici. Ensuite, tu le retrouves sur{' '}
+            {standalone() ? 'ton PC' : 'ton téléphone'} en te connectant avec {pending.email}.
           </span>
           {status && <span className="text-[12px] text-white/50 leading-relaxed">{status}</span>}
           {state !== 'trying' && state !== 'error' && (
@@ -110,7 +110,7 @@ function PendingPanel({ onClose }: { onClose: () => void }) {
           <button
             className="text-[11.5px] text-white/35 hover:text-[rgb(var(--alert))]"
             onClick={() => {
-              if (window.confirm('Abandonner ce compte en attente ? Tout ce que tu as fait sur ce téléphone depuis sera effacé, et tu reviendras à l’écran de création de compte.'))
+              if (window.confirm(`Abandonner ce compte en attente ? Tout ce que tu as fait sur ce ${deviceWord()} depuis sera effacé, et tu reviendras à l’écran de création de compte.`))
                 dropPending();
             }}
           >
@@ -149,7 +149,7 @@ function Problem({ error, message, central, email }: { error: string; message: s
       'Cette adresse a déjà un compte',
       <>
         <span className="text-[12.5px] text-white/65 leading-relaxed">
-          Un compte existe déjà avec {email} sur le Synapse central. Si c’est le tien, connecte-toi : ce que tu as fait sur ce téléphone s’ajoutera à ton cerveau. Sinon,
+          Un compte existe déjà avec {email} sur le Synapse central. Si c’est le tien, connecte-toi : ce que tu as fait sur ce {deviceWord()} s’ajoutera à ton cerveau. Sinon,
           choisis une autre adresse.
         </span>
         <form
@@ -232,11 +232,11 @@ function Problem({ error, message, central, email }: { error: string; message: s
     );
   }
   const text: Record<string, string> = {
-    closed: 'Les inscriptions sont fermées sur ce Synapse central pour l’instant. Tout reste sur ce téléphone : demande au créateur de les rouvrir, puis réessaie.',
+    closed: `Les inscriptions sont fermées sur ce Synapse central pour l’instant. Tout reste sur ce ${deviceWord()} : demande au créateur de les rouvrir, puis réessaie.`,
     invitation: 'Sur ce Synapse central, il faut une invitation pour créer un compte. Demande un lien d’inscription au créateur (ou à un ami), puis recrée ton compte avec ce lien.',
-    full: 'Ce Synapse central est complet pour l’instant. Tout reste sur ce téléphone : réessaie plus tard.',
+    full: `Ce Synapse central est complet pour l’instant. Tout reste sur ce ${deviceWord()} : réessaie plus tard.`,
     maintenance: 'Le Synapse central est en maintenance : nouvel essai automatique dans une minute.',
-    password: 'Le mot de passe n’a pas pu être gardé sur ce téléphone. Abandonne ce compte en attente et recrée-le (8 caractères au moins).',
+    password: `Le mot de passe n’a pas pu être gardé sur ce ${deviceWord()}. Abandonne ce compte en attente et recrée-le (8 caractères au moins).`,
     version:
       message === 'app'
         ? 'Le Synapse central a une version plus récente : installe la nouvelle version de l’application, puis tout repart.'

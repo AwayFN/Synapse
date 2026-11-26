@@ -6,8 +6,8 @@ import { layout } from '../scene/layout';
 import { applyRemote, applySnapshot, allowed, compact, diff, isApplyingRemote, type Op } from './ops';
 import { initialsOf, useSession, type Announcement, type Member, type Mode, type Presence, type Role, type ShareStatus } from './session';
 import { android } from './native';
-import { apiBase, apiUrl, keepToken, requestInit, setApiBase, setSessionToken, standalone } from './remote';
-import { findCentral } from './central';
+import { apiBase, apiUrl, keepToken, localFirst, relayClient, requestInit, setApiBase, setSessionToken, standalone } from './remote';
+import { findCentral, relayRetry } from './central';
 import { brainReady, forgetBrain, forgetEverything } from './offline';
 
 /**
@@ -221,8 +221,8 @@ function onReset(snap: Snapshot) {
     brainName: snap.brain.name,
   });
   setMode('online');
-  // application Android : la copie du cerveau sur le téléphone est à jour (pour s'ouvrir même sans réseau)
-  if (standalone()) brainReady();
+  // téléphone ou PC « client » : la copie du cerveau sur l'appareil est à jour (pour s'ouvrir même sans réseau)
+  if (localFirst()) brainReady();
   seenOnline = new Set((snap.presence || []).map((p) => p.id));
   if (firstReset) {
     firstReset(true);
@@ -296,8 +296,8 @@ function onBye(d: { reason: string }) {
   const mode = BYE_MODE[d.reason] ?? 'closed';
   // le propriétaire ne « perd » jamais son propre cerveau : seulement une reconnexion
   setMode(S().role === 'owner' && mode === 'revoked' ? 'closed' : mode);
-  if (standalone()) {
-    // application Android : un cerveau qu'on ne peut plus voir (ou un compte supprimé) quitte le téléphone
+  if (localFirst()) {
+    // téléphone ou PC « client » : un cerveau qu'on ne peut plus voir (ou un compte supprimé) quitte l'appareil
     if (mode === 'revoked' && S().role !== 'owner') {
       outbox = [];
       forgetBrain(brainId);
@@ -511,9 +511,14 @@ function relocate(force = false) {
     });
 }
 
-/** « Réessayer maintenant » (application Android hors ligne) : on cherche le Synapse central tout de suite */
+/** « Réessayer maintenant » (hors ligne) : on cherche le Synapse central tout de suite */
 export function retrySync() {
   if (standalone()) relocate(true);
+  // PC « client » : le relais de ce PC le cherche (nouvelle adresse publiée sur GitHub…), puis on se rebranche
+  if (relayClient()) {
+    void relayRetry().then(() => reconnectNow('nouvel essai demandé'));
+    return;
+  }
   reconnectNow('nouvel essai demandé');
 }
 

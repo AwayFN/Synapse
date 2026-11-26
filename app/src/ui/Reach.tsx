@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useSession } from '../sync/session';
 import { api } from '../sync/client';
-import { standalone } from '../sync/remote';
+import { localFirst } from '../sync/remote';
 import { canNativeShare, ensureReach, inviteTokenOf, linkFrom, nativeShare, openLink, reachNow, toolReady, type Base, type ReachKind } from '../sync/reach';
 
 /**
@@ -103,7 +103,7 @@ export function ShareSheetButton({ text }: { text: string }) {
 }
 
 /**
- * Application Android : une invitation à un cerveau de ce Synapse central s'ouvre ici, avec son compte (le jeton est
+ * Téléphone ou PC « client » : une invitation à un cerveau de ce Synapse central s'ouvre ici, avec son compte (le jeton est
  * vérifié auprès du serveur, même si son adresse a changé depuis l'envoi du lien) ; sinon, dans le navigateur.
  */
 async function joinInApp(url: URL): Promise<string | null> {
@@ -131,7 +131,8 @@ async function joinInApp(url: URL): Promise<string | null> {
 export function JoinFriend({ hint = true }: { hint?: boolean }) {
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const inApp = standalone();
+  // téléphone ou PC « client » : on rejoint ici, avec son compte (le jeton de l’invitation est vérifié par le serveur)
+  const inApp = localFirst();
   const link = linkFrom(text);
   const bad = text.trim().length > 0 && !link;
   return (

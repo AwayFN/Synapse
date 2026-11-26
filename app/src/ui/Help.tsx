@@ -8,7 +8,7 @@ const NAV: [string, string][] = [
   ['Z Q S D / W A S D', 'voler · E / Espace monter · A / Q descendre'],
   ['Souris', 'flottement & parallaxe'],
   ['Clic sur un noyau', 'zoom + fiche (une note s’ouvre en grand)'],
-  ['Double-clic dans le vide · H', 'revenir aux neurones (vue d’ensemble)'],
+  ['Double-clic dans le vide · H', 'vue d’ensemble'],
   ['Bouton ◎ (à côté de Créer)', 'revenir aux neurones, presque instantané même de très loin'],
   ['F', 'recentrer sur la sélection'],
 ];
@@ -61,8 +61,8 @@ export function Help() {
             ))}
             <div className="xs-label mt-6 mb-2">Au doigt (téléphone)</div>
             <div className="text-[12px] text-white/55 leading-relaxed">
-              Un doigt tourne autour du réseau, pincer avance ou recule, deux doigts déplacent, toucher ouvre un élément, double toucher dans le vide (ou le petit bouton rond à côté de « Créer ») ramène aux neurones, en
-              vue d’ensemble.
+              Un doigt tourne autour du réseau, pincer avance ou recule, deux doigts déplacent, toucher ouvre un élément, double toucher dans le vide revient à la vue
+              d’ensemble. De très loin, le petit bouton rond à côté de « Créer » ramène aux neurones presque instantanément.
             </div>
           </div>
           <div>
@@ -115,7 +115,8 @@ export function Help() {
             <div className="xs-label mt-5 mb-2">Ton compte · les admins</div>
             <div className="text-[12px] text-white/55 leading-relaxed">
               Ton prénom en haut à droite : ton compte, tes cerveaux, rejoindre le cerveau d’un ami, l’application Android (QR code), se déconnecter. Avec ton compte, tu
-              retrouves tout sur ton PC et ton téléphone : ce que tu fais sur l’un apparaît aussitôt sur l’autre. L’espace admin n’apparaît qu’au créateur et aux admins
+              retrouves tout sur ton PC et ton téléphone : ce que tu fais sur l’un apparaît aussitôt sur l’autre. Sans connexion, Synapse continue sur chacun (point orange à côté
+              de ton prénom) et tout se synchronise dès que la connexion revient. L’espace admin n’apparaît qu’au créateur et aux admins
               qu’il nomme ; ils ont tous les mêmes droits.
             </div>
           </div>

@@ -242,7 +242,7 @@ function Hints() {
       <span><Kbd>Molette</Kbd> avancer</span>
       <span><Kbd>Clic droit</Kbd> pivoter</span>
       <span><Kbd>ZQSD</Kbd> voler</span>
-      <span><Kbd>H</Kbd> revenir aux neurones</span>
+      <span><Kbd>H</Kbd> vue d'ensemble</span>
       <span><Kbd>?</Kbd> aide</span>
     </div>
   );

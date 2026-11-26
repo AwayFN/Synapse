@@ -19,7 +19,9 @@
 1. Installe **Node.js** (gratuit, une seule fois) : [nodejs.org](https://nodejs.org/fr/download), version **LTS**.
 2. **[Télécharge Synapse](https://github.com/AwayFN/Synapse/archive/refs/heads/main.zip)**, puis clic droit sur le fichier téléchargé → **Extraire tout**.
 3. Ouvre le dossier et double-clique sur **Lancer Synapse**.
-4. **Connecte-toi avec le compte de ton téléphone** (même e-mail, même mot de passe) : tu retrouves tout ce que tu y as fait. Ou crée ton compte, si tu commences par le PC.
+4. **Connecte-toi avec le compte de ton téléphone** (même e-mail, même mot de passe) : tu retrouves tout ce que tu y as fait. Ou crée ton compte, si tu commences par le PC (même sans connexion : il sera enregistré dès que possible).
+
+**Sur le PC aussi, Synapse marche sans connexion** : l’application vient du dossier Synapse, ton cerveau est gardé sur le PC, et tout se synchronise avec ton téléphone dès que la connexion revient.
 
 Si Windows demande « Voulez-vous exécuter ce fichier ? », clique **Exécuter**. Si le fichier est bloqué : clic droit sur le `.zip` → **Propriétés** → coche **Débloquer** → OK, puis extrais-le de nouveau.
 
@@ -28,13 +30,13 @@ Si Windows demande « Voulez-vous exécuter ce fichier ? », clique **Exécuter*
 - La **première chose** à faire en ouvrant Synapse : **créer ton compte**. Ensuite, c’est bon : tu restes connecté sur cet appareil.
 - **Se déconnecter** (ton prénom en haut à droite → Session) : il faudra se reconnecter avec ton e-mail et ton mot de passe. Sur le téléphone, plus rien de ton compte n’y reste.
 - Le même compte sur ton téléphone et ton PC : **tout se synchronise en direct**. Une note écrite sur le téléphone apparaît sur le PC en une seconde, sans rien relancer.
-- **Sur le téléphone, Synapse marche aussi hors ligne** : ton cerveau est gardé sur le téléphone. Le point à côté de ton prénom dit où tu en es : **vert**, synchronisé ; **orange**, hors ligne (tes modifications attendent et partent toutes seules dès que le Synapse central répond).
+- **Sur le téléphone comme sur le PC, Synapse marche aussi sans connexion** : ton cerveau est gardé sur l’appareil. Ce que tu fais hors ligne sur le téléphone arrive sur le PC dès que la connexion revient, et l’inverse. Le point à côté de ton prénom dit où tu en es : **vert**, synchronisé ; **orange**, hors ligne (tes modifications attendent et partent toutes seules dès que le Synapse central répond).
 - Le réseau change (Wi-Fi ↔ câble ↔ 4G/5G), une coupure, une mise en veille : la connexion repart toute seule.
 
 ## Ce que fait Synapse
 
 - **Le réseau en 3D** : chaque projet, tâche, note et créneau est une constellation néon. Tu voles au milieu (molette, clic droit, ZQSD ; au doigt sur téléphone), tu cliques pour ouvrir.
-- **Revenir aux neurones** : le petit bouton rond ◎ à côté de « Créer · chercher » (ou la touche `H`) te ramène devant ton réseau presque instantanément, même de très loin. Il s’allume quand tu t’es éloigné.
+- **Revenir aux neurones** : le petit bouton rond ◎ à côté de « Créer · chercher » te ramène devant ton réseau presque instantanément, même de très loin. Il s’allume quand tu t’es éloigné. (Le double-clic dans le vide, lui, fait toujours la vue d’ensemble en douceur.)
 - **Écrire en grand** : une note, et aussi la description d’une tâche, d’un projet ou d’un créneau, s’ouvrent sur presque tout l’écran, comme le Bloc-notes. **A− / A+** en bas pour la taille du texte.
 - **Des tags sur tout** : projets, tâches, notes, créneaux. Un clic sur un tag allume ce qui le porte ; `#tag` dans `Ctrl+K` cherche tout ce qui le porte.
 - **Les notes** : une vue avec toutes tes notes, **par projet** ou **indépendantes** (comme les tâches indépendantes), filtrables par tag.
@@ -56,7 +58,7 @@ Si Windows demande « Voulez-vous exécuter ce fichier ? », clique **Exécuter*
 Les comptes vivent sur **un serveur Synapse, le Synapse central** : c’est lui qui permet de retrouver son compte sur tous ses appareils, de partager son cerveau, et à l’admin de voir tout le monde.
 
 - Le Synapse central tourne sur le **PC du créateur** (le premier PC où Synapse a été installé, avec ses données), avec **l’accès Internet ouvert** (Espace admin → Serveur).
-- **Quand ce PC est éteint, les téléphones continuent** : Synapse marche sur chaque téléphone avec sa copie du cerveau, et tout se synchronise dès que le Synapse central revient. Seuls la synchronisation entre appareils, le partage et la création d’un compte sur le serveur attendent son retour.
+- **Quand ce PC est éteint, tout le monde continue** : Synapse marche sur chaque téléphone et chaque autre PC avec sa copie du cerveau, et tout se synchronise dès que le Synapse central revient. Seuls la synchronisation entre appareils, le partage et la création d’un compte sur le serveur attendent son retour.
 - Son adresse Internet gratuite change à chaque redémarrage de Synapse : il la **publie tout seul sur ce dépôt GitHub** (branche `synapse-adresse`, fichier `adresse.json`). Les applications la retrouvent toutes seules, **sans se déconnecter**.
 - Sur un autre PC, « Lancer Synapse » se connecte au Synapse central (rien à compiler). Pour faire de ce PC un serveur indépendant : `Lancer Synapse.cmd --serveur` (revenir : `--client`).
 - Pour un Synapse toujours en ligne, même PC éteint : voir [METTRE-EN-LIGNE.txt](METTRE-EN-LIGNE.txt) (adresse fixe, hébergeur, Docker).
@@ -76,7 +78,7 @@ Tu as reçu un lien ? Ouvre-le (rien à installer, ça s’ouvre dans le navigat
 ## Tes données
 
 - Sur le Synapse central : `%APPDATA%\Synapse` (un dossier par cerveau, une sauvegarde par jour pendant 14 jours).
-- Sur le téléphone : une copie de ton cerveau, pour qu’il marche sans réseau (effacée à « Se déconnecter »).
+- Sur ton téléphone et tes autres PC : une copie de ton cerveau, pour qu’il marche sans connexion (effacée à « Se déconnecter »).
 - Export à tout moment : `Ctrl+K`, puis « Exporter mes données » (sur téléphone : dans Téléchargements).
 
 ## L’application Android (pour le créateur)

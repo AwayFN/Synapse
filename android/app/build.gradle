@@ -3,7 +3,7 @@ plugins {
 }
 
 // Réglages passés par la construction automatique sur GitHub (.github/workflows/android.yml) :
-//   -PversionName=7.0.0 -PversionCode=70000 -PsynapseDepot=AwayFN/Synapse -PsynapseAdresse=https://…
+//   -PversionName=7.1.0 -PversionCode=70100 -PsynapseDepot=AwayFN/Synapse -PsynapseAdresse=https://…
 def prop = { String name, String fallback -> (project.findProperty(name) ?: fallback).toString() }
 def depot = prop('synapseDepot', 'AwayFN/Synapse')
 def adresse = prop('synapseAdresse', '')
@@ -41,8 +41,8 @@ android {
         applicationId 'io.github.awayfn.synapse'
         minSdk 26
         targetSdk 35
-        versionCode prop('versionCode', '70000').toInteger()
-        versionName prop('versionName', '7.0.0')
+        versionCode prop('versionCode', '70100').toInteger()
+        versionName prop('versionName', '7.1.0')
         // le dépôt GitHub où le Synapse central publie son adresse (branche synapse-adresse, fichier adresse.json)
         buildConfigField 'String', 'DEPOT', "\"${depot}\""
         buildConfigField 'String', 'BRANCHE', '"synapse-adresse"'

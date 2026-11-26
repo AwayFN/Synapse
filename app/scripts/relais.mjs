@@ -1,17 +1,39 @@
-// Synapse sur un PC « client » : l'application se connecte au Synapse central (celui du créateur), comme
-// l'application Android. Rien n'est gardé ici : chaque compte, chaque cerveau vit sur le serveur central, et
-// tout ce qu'on fait sur ce PC apparaît en direct sur ses autres appareils (et l'inverse).
+// Synapse sur un PC « client » : chaque compte, chaque cerveau vit sur le Synapse central (celui du créateur), et
+// tout ce qu'on fait sur ce PC apparaît en direct sur ses autres appareils (et l'inverse) — comme l'application
+// Android.
 //
-// Le relais tourne en arrière-plan sur ce PC (http://localhost:5173, comme avant) et transmet tout au serveur
-// central. Pour la fenêtre de Synapse, l'adresse ne change donc jamais (on reste connecté), même quand celle du
-// serveur central change (adresse Internet gratuite, nouvelle à chaque redémarrage) : le relais la retrouve tout
-// seul sur GitHub (central.json → branche synapse-adresse → adresse.json) et continue.
+// V7.1 : Synapse marche aussi SANS connexion sur ce PC. L'application elle-même vient de ce PC (le dossier
+// app/dist), jamais du serveur : elle s'ouvre toujours, garde une copie du cerveau dans la fenêtre, et ce qui est
+// fait hors ligne part dès que le Synapse central répond de nouveau.
+//
+// Le relais tourne en arrière-plan sur ce PC (http://localhost:5173, comme avant) : il sert l'application et
+// transmet l'API (/api/…) au serveur central. Pour la fenêtre de Synapse, l'adresse ne change donc jamais (on reste
+// connecté), même quand celle du serveur central change (adresse Internet gratuite, nouvelle à chaque redémarrage) :
+// le relais la retrouve tout seul sur GitHub (central.json → branche synapse-adresse → adresse.json) et continue.
 // Si le réseau de ce PC change (Wi-Fi → câble, autre box), les connexions se rebranchent toutes seules.
 import http from 'node:http';
 import https from 'node:https';
 import fs from 'node:fs';
 import path from 'node:path';
 import { readCentral } from './server/publish.mjs';
+import { CSP, SECURITY_HEADERS } from './server/util.mjs';
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.woff': 'font/woff',
+  '.txt': 'text/plain; charset=utf-8',
+};
 
 const HOSTS = ['127.0.0.1', '::1'];
 const LOCAL_NAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
@@ -40,7 +62,7 @@ const cleanAddress = (s) => {
   return /^https?:\/\/[^\s/?#]+$/i.test(v) ? v : '';
 };
 
-export function startRelay({ port, appDir, dataDir, log, idleMs, firstMs, proto, spawnServer }) {
+export function startRelay({ port, appDir, dataDir, log, idleMs, firstMs, proto, code = '', spawnServer }) {
   const central = readCentral(appDir);
   const devFile = path.join(dataDir, 'appareil.json');
   const readDev = () => {
@@ -193,6 +215,61 @@ setInterval(tick,3000);
     res.end(b);
   }
 
+  // ───────────────────────── l'application, servie par ce PC (elle s'ouvre même sans connexion)
+  const dist = path.join(appDir, 'dist');
+  const hasApp = () => fs.existsSync(path.join(dist, 'index.html'));
+
+  function serveApp(req, res, pathname) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.writeHead(405, { Allow: 'GET, HEAD' });
+      return res.end();
+    }
+    let rel;
+    try {
+      rel = pathname === '/' ? 'index.html' : decodeURIComponent(pathname).slice(1);
+    } catch {
+      res.writeHead(400);
+      return res.end();
+    }
+    const hidden = rel.split(/[\\/]/).some((seg) => seg.startsWith('.'));
+    let file = path.resolve(dist, rel);
+    if (rel.includes('\0') || hidden || !file.startsWith(dist + path.sep)) {
+      res.writeHead(404);
+      return res.end();
+    }
+    let st = null;
+    try {
+      st = fs.statSync(file);
+    } catch {}
+    if (!st || !st.isFile()) {
+      // une adresse de l'application (/?cerveau=…) : la page de Synapse ; un fichier qui manque : 404
+      if (path.extname(rel)) {
+        res.writeHead(404);
+        return res.end();
+      }
+      file = path.join(dist, 'index.html');
+      try {
+        st = fs.statSync(file);
+      } catch {
+        res.writeHead(500);
+        return res.end();
+      }
+    }
+    const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
+    const immutable = file.startsWith(path.join(dist, 'assets') + path.sep);
+    res.writeHead(200, {
+      'Content-Type': type,
+      'Content-Length': st.size,
+      'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
+      ...SECURITY_HEADERS,
+      ...(type.startsWith('text/html') ? { 'Content-Security-Policy': CSP } : {}),
+    });
+    if (req.method === 'HEAD') return res.end();
+    fs.createReadStream(file)
+      .on('error', () => res.destroy())
+      .pipe(res);
+  }
+
   /** Le serveur central ne répond pas : page d'attente pour une page, erreur claire pour l'application */
   function unavailable(req, res) {
     if (res.headersSent) return res.destroy();
@@ -290,7 +367,7 @@ setInterval(tick,3000);
     }
     const p = String(req.url || '/').split('?')[0];
     if (p === '/__synapse') {
-      return sendJson(res, 200, { app: 'synapse', mode: 'client', proto, pid: process.pid, root: path.join(appDir, 'dist'), clients: alive.size, since: started, upstream: up.url || null, ok: up.ok });
+      return sendJson(res, 200, { app: 'synapse', mode: 'client', proto, code, pid: process.pid, root: path.join(appDir, 'dist'), clients: alive.size, since: started, upstream: up.url || null, ok: up.ok });
     }
     if (p === '/__alive') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
@@ -342,6 +419,8 @@ setInterval(tick,3000);
       }, 400);
       return;
     }
+    // l'application vient de ce PC : elle s'ouvre même sans connexion (seule l'API part au Synapse central)
+    if (!p.startsWith('/api/') && hasApp()) return serveApp(req, res, p);
     if (!up.ok) {
       // une nouvelle recherche au plus toutes les 5 s pendant qu'on attend
       if (Date.now() - up.checkedAt > 5000) void resolve();

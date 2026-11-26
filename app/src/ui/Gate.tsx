@@ -3,8 +3,9 @@ import type { Hello, InviteInfo, SignupInfo } from '../sync/boot';
 import { api, ApiError, retrySync } from '../sync/client';
 import { deName, ROLE_HINT_GUEST, ROLE_LABEL, useSession } from '../sync/session';
 import { android, androidDownloadUrl, appInfo, isAndroidApp, openExternal } from '../sync/native';
-import { PROTO, apiUrl, setApiBase, standalone } from '../sync/remote';
-import { cleanAddress, findCentral, healthy, manualCentral, setManualCentral } from '../sync/central';
+import { PROTO, apiUrl, deviceWord, localFirst, relayClient, standalone } from '../sync/remote';
+import { cleanAddress, healthy, manualCentral, reachCentral, setManualCentral } from '../sync/central';
+import { loadSession } from '../sync/offline';
 import { createPending } from '../sync/pending';
 import { LEVEL, useBackLayer } from '../lib/back';
 import { Corners, cvar } from './common';
@@ -233,8 +234,8 @@ const codeFrom = (s: string) => {
 };
 
 /**
- * Application Android : le Synapse central ne répond pas (encore). On cherche en arrière-plan ; dès qu'il répond, on
- * le dit (et on peut continuer en ligne).
+ * Téléphone ou PC « client » : le Synapse central ne répond pas (encore). On cherche en arrière-plan ; dès qu'il
+ * répond, on le dit (et on peut continuer en ligne).
  */
 function useCentralBack(active: boolean) {
   const [back, setBack] = useState(false);
@@ -242,9 +243,9 @@ function useCentralBack(active: boolean) {
     if (!active) return;
     let stop = false;
     const tick = async () => {
-      const url = await findCentral();
+      const proto = await reachCentral();
       if (stop) return;
-      if (url && (await healthy(url)) === PROTO) setBack(true);
+      if (proto === PROTO) setBack(true);
       else window.setTimeout(() => void tick(), 8000);
     };
     void tick();
@@ -253,6 +254,17 @@ function useCentralBack(active: boolean) {
     };
   }, [active]);
   return back;
+}
+
+/** Le dépôt GitHub de Synapse (pour télécharger une nouvelle version) */
+function depotOf(): string {
+  return appInfo().depot || useSession.getState().server?.depot || loadSession()?.server.depot || '';
+}
+/** La nouvelle version : l'application Android (téléphone), ou le dossier Synapse à extraire (PC) */
+export function newVersionUrl(): string | null {
+  const depot = depotOf();
+  if (!depot) return null;
+  return standalone() ? androidDownloadUrl(depot) : `https://github.com/${depot}/archive/refs/heads/main.zip`;
 }
 
 /** Avancé : l'adresse d'un autre serveur Synapse (le sien, sur le même Wi-Fi ou chez un hébergeur) */
@@ -345,7 +357,7 @@ export function AuthScreen({
           <span className="hud text-[9.5px] text-[#ffb020]">Sans connexion au Synapse central</span>
           <br />
           {tab === 'signup'
-            ? 'Il ne répond pas pour l’instant (l’ordinateur qui l’héberge est peut-être éteint, ou le téléphone n’a pas de réseau). Crée quand même ton compte : Synapse s’ouvre tout de suite, sur ce téléphone, et ton compte sera enregistré tout seul dès qu’il répond, avec tout ce que tu auras fait.'
+            ? `Il ne répond pas pour l’instant (l’ordinateur qui l’héberge est peut-être éteint, ou ce ${deviceWord()} n’a pas de réseau). Crée quand même ton compte : Synapse s’ouvre tout de suite, sur ce ${deviceWord()}, et ton compte sera enregistré tout seul dès qu’il répond, avec tout ce que tu auras fait.`
             : 'Pour te connecter à un compte qui existe déjà, il faut que le Synapse central réponde (il vérifie ton mot de passe). Nouvel essai automatique toutes les quelques secondes.'}
         </div>
       )}
@@ -432,13 +444,13 @@ export function AuthScreen({
           ↓ Télécharger l’application Android
         </a>
       )}
-      {standalone() ? (
+      {localFirst() ? (
         <>
           {!offline && <ServerAddress onSaved={() => location.reload()} />}
           <div className="text-[11px] text-white/32 mt-6 leading-relaxed">
-            Synapse marche sur ce téléphone, même sans réseau : ton cerveau y est gardé, et synchronisé avec ton compte sur le Synapse central
+            Synapse marche sur ce {deviceWord()}, même sans réseau : ton cerveau y est gardé, et synchronisé avec ton compte sur le Synapse central
             {hello.server.creatorName ? <> {deName(hello.server.creatorName)}</> : null}{' '}
-            dès qu’il répond. Avec ton compte, tu le retrouves aussi sur ton PC. Tu restes connecté jusqu’à « Se déconnecter ».
+            dès qu’il répond. Avec ton compte, tu le retrouves aussi sur {standalone() ? 'ton PC' : 'ton téléphone'}. Tu restes connecté jusqu’à « Se déconnecter ».
           </div>
         </>
       ) : (
@@ -516,16 +528,16 @@ export function ClaimScreen({ hello }: { hello: Hello }) {
 export function UnreachableScreen({ reason }: { reason: 'server' | 'version' | 'old-server' }) {
   const [tries, setTries] = useState(0);
   const inApp = standalone();
+  const pc = relayClient();
   useEffect(() => {
-    // dans l'application Android, « version » veut dire : c'est l'application qu'il faut mettre à jour
-    if (reason === 'version' && !inApp) return;
+    // téléphone ou PC « client », « version » veut dire : c'est Synapse sur l'appareil qu'il faut mettre à jour
+    if (reason === 'version' && !inApp && !pc) return;
     // le serveur revient (ou le PC a relancé Synapse dans sa nouvelle version) : la page s'ouvre toute seule
     const t = window.setInterval(async () => {
       setTries((n) => n + 1);
       try {
-        if (inApp) {
-          const url = await findCentral();
-          if (url && (await healthy(url)) === PROTO) location.reload();
+        if (inApp || pc) {
+          if ((await reachCentral()) === PROTO) location.reload();
           return;
         }
         const r = await fetch(apiUrl('/api/health'), { cache: 'no-store' });
@@ -534,11 +546,10 @@ export function UnreachableScreen({ reason }: { reason: 'server' | 'version' | '
       } catch {
         /* toujours pas */
       }
-    }, inApp ? 8000 : 5000);
+    }, inApp || pc ? 8000 : 5000);
     return () => window.clearInterval(t);
-  }, [reason, inApp]);
+  }, [reason, inApp, pc]);
   const app = android();
-  const depot = appInfo().depot;
   return (
     <Frame>
       <div className="hud text-[10px] text-[rgb(var(--alert))] mt-7">{reason === 'server' ? 'Connexion' : 'Mise à jour'}</div>
@@ -546,19 +557,23 @@ export function UnreachableScreen({ reason }: { reason: 'server' | 'version' | '
         {reason === 'version'
           ? inApp
             ? 'Le Synapse central a été mis à jour : installe la nouvelle version de l’application (ton compte et tes données ne bougent pas).'
+            : pc
+              ? 'Le Synapse central a été mis à jour : télécharge la nouvelle version de Synapse pour ce PC, puis relance-la (ton compte et tes données ne bougent pas).'
             : 'Le serveur Synapse vient d’être mis à jour : recharge la page pour utiliser la nouvelle version.'
           : reason === 'old-server'
             ? inApp
               ? 'Cette application est plus récente que le Synapse central : il doit être mis à jour (sur le PC du créateur, double-clic sur « Lancer Synapse »). Synapse s’ouvrira tout seul ensuite.'
+              : pc
+                ? 'Synapse sur ce PC est plus récent que le Synapse central : il doit être mis à jour (sur le PC du créateur, double-clic sur « Lancer Synapse »). Synapse s’ouvrira tout seul ensuite.'
               : 'Synapse a été mis à jour, mais l’ancienne version tourne encore sur l’ordinateur qui l’héberge. Sur ce PC : double-clique sur « Lancer Synapse » (la nouvelle version remplace l’ancienne). Cette page s’ouvrira toute seule.'
-            : inApp
-              ? 'Le Synapse central ne répond pas pour l’instant (l’ordinateur qui l’héberge est peut-être éteint, ou le téléphone n’a pas de réseau), et ton cerveau n’est pas encore sur ce téléphone. Nouvel essai automatique : Synapse s’ouvrira tout seul.'
+            : inApp || pc
+              ? `Le Synapse central ne répond pas pour l’instant (l’ordinateur qui l’héberge est peut-être éteint, ou ce ${deviceWord()} n’a pas de réseau), et ton cerveau n’est pas encore sur ce ${deviceWord()}. Nouvel essai automatique : Synapse s’ouvrira tout seul.`
               : 'Le serveur Synapse ne répond pas pour l’instant : l’ordinateur qui l’héberge est peut-être éteint, ou la connexion est coupée. Nouvel essai automatique toutes les 5 secondes.'}
       </div>
       {reason !== 'version' && tries > 0 && <div className="mono text-[10px] text-white/35 mt-3">Essai n° {tries + 1}…</div>}
       <div className="flex gap-2 mt-6 flex-wrap">
-        {inApp && reason === 'version' && depot ? (
-          <button className="btn btn-primary" onClick={() => openExternal(androidDownloadUrl(depot))}>
+        {(inApp || pc) && reason === 'version' && newVersionUrl() ? (
+          <button className="btn btn-primary" onClick={() => openExternal(newVersionUrl()!)}>
             ↓ Télécharger la nouvelle version
           </button>
         ) : (
@@ -967,16 +982,16 @@ function OutdatedBar() {
   const outdated = useSession((s) => s.outdated);
   const [hidden, setHidden] = useState(false);
   if (!outdated || hidden) return null;
-  const depot = appInfo().depot;
+  const download = newVersionUrl();
   return (
     <div className="fixed left-1/2 -translate-x-1/2 top-[86px] max-md:top-[64px] z-[70] glass neon px-4 py-2.5 flex items-center gap-3 max-w-[min(620px,calc(100vw-24px))] anim-pop" data-ui style={cvar('#ffb020')}>
       <span className="text-[12px] text-white/80 leading-snug">
         {outdated === 'app'
-          ? 'Une nouvelle version de Synapse est sortie : installe-la pour synchroniser de nouveau. Tout reste sur ce téléphone en attendant.'
-          : 'Le Synapse central n’est pas encore à jour (sur le PC du créateur : « Lancer Synapse »). Tout reste sur ce téléphone en attendant.'}
+          ? `Une nouvelle version de Synapse est sortie : installe-la pour synchroniser de nouveau. Tout reste sur ce ${deviceWord()} en attendant.`
+          : `Le Synapse central n’est pas encore à jour (sur le PC du créateur : « Lancer Synapse »). Tout reste sur ce ${deviceWord()} en attendant.`}
       </span>
-      {outdated === 'app' && depot && (
-        <button className="btn btn-primary !py-1 !px-2 !text-[9.5px] flex-none" onClick={() => openExternal(androidDownloadUrl(depot))}>
+      {outdated === 'app' && download && (
+        <button className="btn btn-primary !py-1 !px-2 !text-[9.5px] flex-none" onClick={() => openExternal(download)}>
           Télécharger
         </button>
       )}
@@ -999,12 +1014,12 @@ export function SessionOverlay() {
       {label}
     </button>
   );
-  const inApp = standalone();
+  const inApp = localFirst();
   if (mode === 'revoked' && role !== 'owner') {
     return (
       <Blocker
         title="Accès retiré"
-        text={`${ownerName || 'Le propriétaire'} a retiré ton accès à ce cerveau (ou tu l’as quitté). Rien de son contenu n’est resté sur ${inApp ? 'ce téléphone' : 'ton ordinateur'}.`}
+        text={`${ownerName || 'Le propriétaire'} a retiré ton accès à ce cerveau (ou tu l’as quitté). Rien de son contenu n’est resté sur ${inApp ? `ce ${deviceWord()}` : 'ton ordinateur'}.`}
         action={home(account ? 'Retour à mon cerveau' : 'Fermer')}
       />
     );
@@ -1013,7 +1028,7 @@ export function SessionOverlay() {
   if (mode === 'deleted') return <Blocker title="Compte supprimé" text="Ce compte a été supprimé. Son cerveau sera effacé définitivement sous 30 jours." action={home('Fermer')} />;
   if (mode === 'loggedout')
     return <Blocker title="Déconnecté" text="Ta session s’est terminée (déconnexion depuis un autre appareil, ou nouveau mot de passe). Reconnecte-toi avec ton e-mail et ton mot de passe : tout est là." action={home('Se reconnecter')} alert={false} />;
-  // application Android : Synapse continue sur le téléphone (maintenance, coupure) ; l'état est en haut à droite
+  // téléphone ou PC « client » : Synapse continue sur l'appareil (maintenance, coupure) ; l'état est en haut à droite
   if (inApp) return <OutdatedBar />;
   if (mode === 'maintenance')
     return <Blocker title="Maintenance" text={`Synapse fait une petite pause pour s’améliorer.${message ? ` ${message}` : ''} La reconnexion se fera toute seule.`} action={home('Réessayer')} alert={false} />;

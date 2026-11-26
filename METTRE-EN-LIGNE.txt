@@ -18,9 +18,9 @@ même Synapse : comptes, cerveaux, invitations, espace admin.
   déjà enregistrée sur ce PC (celle qui sert à publier Synapse). Les
   applications la retrouvent toutes seules, sans se déconnecter.
   État : Espace admin > Serveur > « Adresse pour les applications ».
-- Quand ton PC est éteint : les téléphones continuent (hors ligne, point
-  orange) et se synchronisent dès qu'il revient ; les PC de tes amis
-  affichent « Le Synapse central ne répond pas » et réessaient tout seuls.
+- Quand ton PC est éteint : les téléphones et les PC de tes amis
+  continuent (hors ligne, point orange) et se synchronisent dès qu'il
+  revient.
 - Cloudflare réserve ces adresses gratuites aux essais (pas pour un vrai
   service public).
 

@@ -5,7 +5,8 @@
 //                                           « Synapse central »): rebuild if the sources changed, start it;
 //                                         · client  : any other PC: a small relay connects the window to the
 //                                           Synapse central (accounts and brains live there, synced live
-//                                           with the person's phone). Nothing to build.
+//                                           with the person's phone). Nothing to build: the app
+//                                           itself (dist/) comes from this PC and works offline.
 //                                       The mode is chosen once (a PC that already has Synapse data stays a
 //                                       server, a new installation becomes a client) and remembered.
 //   node scripts/synapse.mjs --serveur  force (and remember) the server mode on this PC
@@ -95,6 +96,35 @@ function sourceHash() {
   SOURCES.forEach(walk);
   return h.digest('hex').slice(0, 16);
 }
+
+/**
+ * Empreinte du code du serveur et du relais (ce dossier scripts/) : un serveur qui tourne encore avec un ancien code
+ * (Synapse mis à jour pendant qu'il tournait) est remplacé au prochain lancement, même si PROTO n'a pas changé.
+ */
+function codeHash() {
+  const h = crypto.createHash('sha1');
+  const walk = (dir) => {
+    let names = [];
+    try {
+      names = fs.readdirSync(dir).sort();
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      const abs = path.join(dir, name);
+      if (fs.statSync(abs).isDirectory()) walk(abs);
+      else if (name.endsWith('.mjs')) {
+        h.update(path.relative(APP_DIR, abs).replace(/\\/g, '/'));
+        h.update('\0');
+        h.update(fs.readFileSync(abs));
+        h.update('\0');
+      }
+    }
+  };
+  walk(path.join(APP_DIR, 'scripts'));
+  return h.digest('hex').slice(0, 12);
+}
+const CODE = codeHash();
 
 function readStamp() {
   try {
@@ -307,7 +337,7 @@ async function launch() {
   const mode = await deviceMode();
 
   let st = await probe();
-  if (st.state === 'ours' && (!samePath(st.info.root, DIST) || st.info.proto !== PROTO || (st.info.mode || 'serveur') !== mode)) {
+  if (st.state === 'ours' && (!samePath(st.info.root, DIST) || st.info.proto !== PROTO || st.info.code !== CODE || (st.info.mode || 'serveur') !== mode)) {
     // a server from another copy of the folder (or an older version of Synapse, or the other mode) is still
     // running: replace it
     await quit();
@@ -321,7 +351,8 @@ async function launch() {
     );
   }
 
-  // client : rien à compiler, la fenêtre reçoit l'application du Synapse central
+  // client : rien à compiler non plus (dist/ est dans le dossier) : le relais sert l'application depuis ce PC (elle
+  // marche sans connexion) et transmet l'API au Synapse central
   if (mode === 'serveur') ensureBuilt();
 
   if (st.state === 'free') {
@@ -345,7 +376,7 @@ async function launch() {
 /** The background server lives in ./server/ (app, shared brain, invitations, live sync) */
 async function serve() {
   const { startServer } = await import('./server/server.mjs');
-  startServer({ port: PORT, dist: DIST, idleMs: IDLE_MS, firstMs: FIRST_MS, log, stamp: readStamp });
+  startServer({ port: PORT, dist: DIST, idleMs: IDLE_MS, firstMs: FIRST_MS, log, stamp: readStamp, code: CODE });
 }
 
 /** Client mode: the relay to the Synapse central (./relais.mjs) */
@@ -360,6 +391,7 @@ async function serveRelay() {
     idleMs: IDLE_MS,
     firstMs: FIRST_MS,
     proto: PROTO,
+    code: CODE,
     // « Utiliser Synapse seul sur ce PC » (quand le Synapse central ne répond pas) : ce PC devient serveur
     spawnServer: () => spawn(process.execPath, [SELF, '--serve'], { cwd: os.homedir(), detached: true, stdio: 'ignore', windowsHide: true }).unref(),
   });

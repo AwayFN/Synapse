@@ -4,13 +4,13 @@ import { useData } from '../store/data';
 import { flushStorage } from '../store/storage';
 import { layout } from '../scene/layout';
 import { api, ApiError, clientId } from './client';
-import { findCentral, forgetPublished, healthy } from './central';
-import { PROTO, setApiBase, setSessionToken } from './remote';
+import { forgetPublished, reachCentral } from './central';
+import { PROTO, apiBase, setSessionToken, standalone } from './remote';
 import type { Op } from './ops';
 
 /**
- * Un compte créé sur le téléphone pendant que le Synapse central ne répondait pas (PC du créateur éteint, pas de
- * réseau) : on utilise Synapse tout de suite, sur le téléphone, et le compte est enregistré sur le Synapse central
+ * Un compte créé sur le téléphone (ou un PC « client ») pendant que le Synapse central ne répondait pas (PC du créateur
+ * éteint, pas de réseau) : on utilise Synapse tout de suite, sur l'appareil, et le compte est enregistré sur le Synapse central
  * dès qu'il répond, avec tout ce qui a été fait entre-temps (qui devient son cerveau). Ensuite, c'est un compte
  * comme les autres : on le retrouve sur son PC en s'y connectant.
  *
@@ -136,17 +136,16 @@ async function attempt() {
   const p = loadPending();
   if (!p) return;
   usePending.setState({ state: 'trying' });
-  const url = await findCentral();
-  if (!url) {
+  // le Synapse central répond-il ? (téléphone : on le cherche ; PC « client » : par le relais de ce PC)
+  const proto = await reachCentral();
+  if (!proto) {
     usePending.setState({ state: 'waiting', central: null, next: Date.now() + delay });
     schedule();
     return;
   }
-  setApiBase(url);
-  usePending.setState({ central: url });
+  usePending.setState({ central: standalone() ? apiBase() : 'relais' });
   // une autre version de Synapse (le serveur ou l'application doit être mis à jour)
-  const proto = await healthy(url);
-  if (proto && proto !== PROTO) {
+  if (proto !== PROTO) {
     usePending.setState({ state: 'error', error: 'version', message: proto > PROTO ? 'app' : 'serveur' });
     schedule(60_000);
     return;
@@ -158,7 +157,7 @@ async function attempt() {
         return;
       }
       await api('/api/auth/signup', { name: p.name, email: p.email, password: p.password, terms: !!p.terms });
-      // le compte existe : le mot de passe n'est plus gardé nulle part sur le téléphone
+      // le compte existe : le mot de passe n'est plus gardé nulle part sur l'appareil
       const { password: _forget, ...rest } = p;
       void _forget;
       savePending({ ...rest, registered: true });

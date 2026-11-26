@@ -22,6 +22,26 @@ export function standalone(): boolean {
   }
 }
 
+/**
+ * PC « client » (V7.1) : un relais sur ce PC sert l'application (elle vient du dossier Synapse) et transmet l'API au
+ * Synapse central. Même adresse que la page et cookie de session, comme un navigateur ; mais, comme sur le téléphone,
+ * Synapse y marche sans connexion. Repéré au démarrage (boot.ts).
+ */
+let relay = false;
+export const setRelayClient = (on: boolean) => {
+  relay = on;
+};
+export const relayClient = () => relay;
+
+/**
+ * Synapse marche ici même sans connexion (téléphone, ou PC « client ») : le cerveau est gardé sur l'appareil et se
+ * synchronise avec le Synapse central dès qu'il répond. (Le PC du créateur, lui, EST le Synapse central.)
+ */
+export const localFirst = () => relay || standalone();
+
+/** « téléphone » ou « PC » : pour dire où sont gardées les données */
+export const deviceWord = () => (standalone() ? 'téléphone' : 'PC');
+
 let base = '';
 /** L'adresse du serveur pour l'API : '' = celle de la page */
 export const apiBase = () => base;
