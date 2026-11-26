@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Synapse</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #e9e9f1; font: 15px/1.6 system-ui, Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
+  .w { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 22px; box-sizing: border-box; }
+  .c { width: 100%; max-width: 460px; border: 1px solid rgba(255,255,255,.08); background: linear-gradient(180deg, rgba(14,14,24,.85), rgba(5,5,10,.8)); padding: 26px 22px; box-shadow: 0 0 50px rgba(0,229,255,.06); position: relative; }
+  .c::before { content: ''; position: absolute; left: 0; right: 0; top: -1px; height: 1px; background: linear-gradient(90deg, transparent, #00e5ff 18%, #00e5ff 82%, transparent); box-shadow: 0 0 14px rgba(0,229,255,.9); }
+  .t { display: flex; gap: 12px; align-items: center; font: 600 14px/1 monospace; letter-spacing: .42em; text-transform: uppercase; }
+  .d { width: 8px; height: 8px; transform: rotate(45deg); background: #ff2e88; box-shadow: 0 0 12px #ff2e88; }
+  .h { margin-top: 24px; font: 10px/1.4 monospace; letter-spacing: .16em; text-transform: uppercase; color: #00e5ff; display: flex; align-items: center; gap: 8px; }
+  .b { width: 7px; height: 7px; border-radius: 50%; background: #00e5ff; animation: b 1.6s ease-in-out infinite; }
+  .off .b { background: #ff4d6d; } .off .h { color: #ff4d6d; }
+  @keyframes b { 50% { opacity: .3; } }
+  p { color: rgba(233,233,241,.72); margin: 10px 0 0; }
+  small { display: block; color: rgba(233,233,241,.42); margin-top: 10px; font-size: 12.5px; }
+  button { font: 11px monospace; letter-spacing: .14em; text-transform: uppercase; padding: 11px 14px; border: 1px solid rgba(255,255,255,.15); background: rgba(255,255,255,.03); color: #e9e9f1; margin: 14px 8px 0 0; border-radius: 2px; }
+  button.p { background: rgba(0,229,255,.13); border-color: rgba(0,229,255,.6); color: #00e5ff; }
+  input { width: 100%; box-sizing: border-box; margin-top: 8px; padding: 11px 12px; font: 13px monospace; color: #fff; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.12); border-radius: 2px; outline: none; }
+  input:focus { border-color: rgba(0,229,255,.65); }
+  .adv { margin-top: 22px; border-top: 1px solid rgba(255,255,255,.07); padding-top: 14px; display: none; }
+  .show .adv { display: block; }
+  .link { background: none; border: 0; padding: 0; margin-top: 16px; color: rgba(233,233,241,.45); text-transform: none; letter-spacing: 0; font: 12.5px system-ui, sans-serif; text-decoration: underline; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="w"><div class="c" id="card">
+  <div class="t"><i class="d"></i>Synapse</div>
+  <div class="h"><span class="b"></span><span id="titre">Connexion…</span></div>
+  <p id="texte">Connexion au Synapse central…</p>
+  <small id="aide"></small>
+  <div id="actions" class="hidden">
+    <button class="p" onclick="reessayer()">Réessayer maintenant</button>
+    <button onclick="document.getElementById('card').classList.toggle('show')">Adresse du serveur</button>
+  </div>
+  <div class="adv">
+    <div style="font: 10px monospace; letter-spacing: .16em; text-transform: uppercase; color: rgba(233,233,241,.42)">Adresse du serveur Synapse (avancé)</div>
+    <input id="adresse" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://…">
+    <small>Laisse vide pour utiliser l’adresse publiée par le Synapse central (recommandé). Une adresse sur le même Wi-Fi ressemble à http://192.168.1.20:5173.</small>
+    <button class="p" onclick="choisir()">Se connecter à cette adresse</button>
+  </div>
+</div></div>
+<script>
+  var A = window.SynapseAndroid;
+  function info() { try { return JSON.parse(A.info()); } catch (e) { return {}; } }
+  function etat(s) {
+    var i = info();
+    var card = document.getElementById('card');
+    card.classList.toggle('off', s === 'hors-ligne');
+    document.getElementById('actions').classList.toggle('hidden', s === 'demarrage');
+    if (s === 'demarrage') {
+      document.getElementById('titre').textContent = 'Connexion…';
+      document.getElementById('texte').textContent = 'Connexion au Synapse central…';
+      document.getElementById('aide').textContent = '';
+    } else {
+      document.getElementById('titre').textContent = s === 'adresse' ? 'Changer de serveur' : 'Serveur injoignable';
+      document.getElementById('texte').textContent = s === 'adresse' ? 'Choisis l’adresse du serveur Synapse, ou laisse vide pour utiliser celle du Synapse central.' : (i.erreur || 'Le Synapse central ne répond pas pour l’instant.');
+      document.getElementById('aide').textContent = s === 'adresse' ? '' : 'Nouvel essai automatique toutes les quelques secondes : Synapse s’ouvrira tout seul dès que le serveur répond. Tes données sont en sécurité sur le serveur.';
+      if (s === 'adresse') card.classList.add('show');
+    }
+    var input = document.getElementById('adresse');
+    if (!input.value) input.value = i.manuelle || '';
+  }
+  window.etat = etat;
+  function reessayer() { document.getElementById('titre').textContent = 'Recherche…'; A.retry(); }
+  function choisir() { A.setServer(document.getElementById('adresse').value || ''); etat('demarrage'); }
+  etat((location.hash || '#demarrage').slice(1));
+  window.addEventListener('hashchange', function () { etat(location.hash.slice(1)); });
+</script>
+</body>
+</html>

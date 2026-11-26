@@ -1,95 +1,127 @@
-﻿SYNAPSE · ton réseau personnel en 3D (V5)
+﻿SYNAPSE · ton réseau personnel en 3D (V6)
 =========================================
 
-Pour ouvrir l'application : double-clique sur « Lancer Synapse ».
-Premier lancement : crée ton compte (prénom, e-mail, mot de passe).
+Sur PC : double-clique sur « Lancer Synapse ».
+Sur téléphone Android : installe l'application (voir plus bas).
+Première ouverture : crée ton compte (prénom, e-mail, mot de passe), ou
+connecte-toi avec celui que tu as déjà.
 
-- Synapse a besoin de Node.js (gratuit, version LTS) : nodejs.org
+- Synapse a besoin de Node.js sur le PC (gratuit, version LTS) : nodejs.org
 - Si Windows demande « Voulez-vous exécuter ce fichier ? » : Exécuter.
 - Si le fichier est bloqué : clic droit sur le .zip téléchargé >
   Propriétés > coche « Débloquer » > OK, puis extrais-le de nouveau.
 - Ne lance pas Synapse depuis l'intérieur du .zip : extrais-le d'abord
   (clic droit > Extraire tout).
 
+Ton compte, sur tous tes appareils
+----------------------------------
+- La première chose à faire en ouvrant Synapse : créer ton compte. Ensuite
+  c'est bon : tu restes connecté sur cet appareil.
+- Ton prénom en haut à droite > Session > « Se déconnecter » : il faudra se
+  reconnecter avec ton e-mail et ton mot de passe.
+- Le même compte sur ton PC et ton téléphone : tout se synchronise en
+  direct. Ce que tu écris sur l'un apparaît sur l'autre en une seconde,
+  sans rien relancer, sans se déconnecter.
+- Le réseau change (Wi-Fi <-> câble <-> 4G/5G), une coupure, une mise en
+  veille : la connexion repart toute seule. Ce que tu modifies pendant une
+  coupure est gardé, et part dès que la connexion revient.
+
+L'application Android
+---------------------
+1. Depuis le téléphone, ouvre :
+   https://github.com/AwayFN/Synapse/releases/latest/download/Synapse.apk
+   (ou, sur le PC : ton prénom > « Sur ton téléphone » > QR code).
+2. Ouvre le fichier « Synapse.apk ». Android demande d'autoriser
+   l'installation d'applications inconnues : autorise ton navigateur,
+   puis Installer.
+3. Ouvre Synapse (l'icône du neurone néon) et connecte-toi.
+- Le bouton retour du téléphone fait comme la touche Échap : il ferme ce
+  qui est ouvert.
+- L'application te prévient quand une nouvelle version existe. Si Android
+  refuse de l'installer par-dessus l'ancienne : désinstalle Synapse, puis
+  installe la nouvelle (ton compte et tes données sont sur le serveur,
+  rien n'est perdu).
+
 Ce que tu y trouves
 -------------------
 - Tes projets, tâches, notes et créneaux, reliés dans un réseau en 3D
   où tu voles au milieu de tes idées (molette, clic droit, Z Q S D).
-- Les notes s'ouvrent en grand, presque tout l'écran (comme le
-  Bloc-notes), avec en bas la ligne, la colonne, les caractères et les
-  mots. Tags et liens sont juste sous le titre.
+- Écrire en grand : une note s'ouvre sur presque tout l'écran (comme le
+  Bloc-notes), et la description d'une tâche, d'un projet ou d'un
+  créneau aussi (« Écrire en grand » dans sa fiche). En bas : la ligne,
+  la colonne, les caractères, les mots, et A- / A+ pour la taille du
+  texte (gardée sur chaque appareil).
+- Des tags sur tout : projets, tâches, notes, créneaux. Un clic sur un
+  tag (en haut du réseau) allume ce qui le porte.
+- La vue Notes : toutes tes notes, par projet ou « indépendantes » (une
+  note sans projet, comme une tâche indépendante), filtrables par tag.
+  Une note peut appartenir à un projet : choisis-le en haut de la note.
 - L'emploi du temps : ta semaine en grille, les heures à gauche.
   Glisse dans la grille pour créer un créneau, glisse-le pour le
   déplacer, tire son bas pour changer sa durée, clique dessus pour le
   régler. Chaque créneau peut appartenir à un projet (« Sans projet »
   sinon) ; la fiche du projet montre le temps qui lui est consacré.
 - Les tâches : un tableau à faire / en cours / fait.
-- Tout se relie : « + Lier à… » dans chaque fiche et en haut de chaque
-  note relie une note, une tâche, un projet ou un créneau à n'importe
-  quel autre. Une tâche ou un créneau peut appartenir à un projet.
+- Tout se relie : « + Lier à… » relie une note, une tâche, un projet ou
+  un créneau à n'importe quel autre.
 
 Raccourcis
 ----------
 Ctrl+K           créer ou chercher, en une phrase :
                    note Idée startup #idee
-                   tâche Appeler Léa @Projet_App demain 14h
+                   note Compte rendu @Projet_App   (note du projet)
+                   tâche Appeler Léa @Projet_App demain 14h #urgent
                    projet Site vitrine deadline 30/12
                    créneau 12h01-17h38 Deep work @App
-Ctrl+N ou Alt+N  nouvelle note, en plein écran
+                   #urgent        (tout ce qui porte ce tag)
+Ctrl+N ou Alt+N  nouvelle note, en grand
 Tab              emploi du temps      Maj+Tab   tâches
-Échap            retour au réseau     ?         l'aide complète
+Échap            fermer ce qui est ouvert, partout ; revenir au réseau
+?                l'aide complète
+
+Le Synapse central
+------------------
+Tous les comptes vivent sur un seul serveur : le Synapse central, sur le
+PC du créateur. Les applications (téléphones, autres PC) s'y connectent.
+- Ce PC doit rester allumé, avec l'accès Internet ouvert (Espace admin >
+  Serveur, ou bouton « Partager »).
+- Son adresse Internet gratuite change à chaque redémarrage de Synapse :
+  il la publie tout seul sur GitHub (dépôt AwayFN/Synapse, branche
+  synapse-adresse). Les applications la retrouvent toutes seules, sans se
+  déconnecter. État de la publication : Espace admin > Serveur.
+- Sur un autre PC, « Lancer Synapse » se connecte au Synapse central (rien
+  à compiler). Pour faire de ce PC un serveur indépendant :
+  « Lancer Synapse.cmd --serveur » (revenir : « --client »).
 
 Partager ton cerveau
 --------------------
 Bouton « Partager », en haut à droite :
 1. Le prénom de la personne (facultatif), puis ce qu'elle peut faire :
    « Peut modifier » ou « Peut seulement regarder ».
-2. « Créer le lien d'invitation » : Synapse ouvre une adresse Internet
-   sécurisée et gratuite (la première fois, il te demande ton accord
-   pour télécharger l'outil gratuit cloudflared). Pour quelqu'un chez
-   toi : « même Wi-Fi ».
-3. Envoie le lien (SMS, WhatsApp…). La personne n'a rien à installer :
-   elle l'ouvre dans son navigateur, sur ordinateur ou téléphone.
+2. « Créer le lien d'invitation », puis envoie-le (SMS, WhatsApp…).
 - Une seule personne écrit à la fois dans une même note : les autres
   la voient en lecture seule, avec son prénom, jusqu'à ce qu'elle ait
   fini.
 - Les éléments marqués 🔒 privé (case dans leur fiche) ne sont jamais
   montrés aux personnes invitées.
-- Ton ordinateur doit rester allumé. Synapse reste ouvert en arrière-
-  plan tant qu'un accès est ouvert, même fenêtre fermée.
-- L'adresse Internet gratuite change quand Synapse redémarre : dans
-  « Partager », le bouton « Lien » à côté de chaque personne lui renvoie
-  son lien ; elle revient à sa place, rien n'est perdu.
 
 Les comptes et les admins
 -------------------------
-- À l'installation, chacun crée son compte : c'est un compte normal,
-  sans espace admin.
+- Chacun crée son compte en ouvrant l'application (inscriptions
+  ouvertes ; l'admin peut les mettre « sur invitation » ou les fermer :
+  Espace admin > Inscriptions).
 - Le créateur de Synapse est admin. Dans l'espace admin (en haut à
-  droite) > Comptes, il peut nommer d'autres admins (« Nommer admin ») :
-  ils ont exactement les mêmes droits que lui, sauf sur son compte.
-- L'espace admin montre les personnes qui ont un compte sur CE Synapse
-  (celles qui ont ouvert ton lien, sur ton ordinateur). Quelqu'un qui
-  installe Synapse chez lui a son propre Synapse, séparé du tien.
-
-Rejoindre le cerveau d'un ami
------------------------------
-Ouvre le lien qu'il t'envoie (ou colle-le : ton prénom en haut à
-droite > « Rejoindre le cerveau d'un ami »).
-
-Sur ton téléphone
------------------
-Ton prénom en haut à droite > « Sur ton téléphone » > « Afficher le QR
-code » : vise-le avec l'appareil photo du téléphone et touche le lien.
-Au doigt : un doigt tourne autour du réseau, pincer avance ou recule,
-deux doigts déplacent, toucher ouvre, double toucher dans le vide
-revient à la vue d'ensemble.
+  droite) il voit tous les comptes, leurs appareils (application
+  Android, application Windows, navigateur), qui est en ligne et où,
+  les statistiques, les retours et les erreurs. Personnes > « Nommer
+  admin » : les admins ont exactement les mêmes droits que lui, sauf sur
+  son compte. L'espace admin ne montre jamais le contenu des cerveaux.
 
 Tes données
 -----------
-- Tout est dans %APPDATA%\Synapse : un dossier par cerveau, avec une
-  sauvegarde par jour (14 jours).
-- Ton cerveau de la version précédente est gardé tel quel, à côté du
-  nouveau : cerveau-v4.json, dans le dossier de ton cerveau.
-- Exporter : Ctrl+K, puis « Exporter mes données ».
-- Mettre Synapse en ligne pour tout le monde : lis METTRE-EN-LIGNE.txt.
+- Sur le Synapse central : %APPDATA%\Synapse : un dossier par cerveau,
+  avec une sauvegarde par jour (14 jours).
+- Exporter : Ctrl+K, puis « Exporter mes données » (sur le téléphone : le
+  fichier va dans Téléchargements).
+- Mettre Synapse en ligne pour tout le monde, même PC éteint : lis
+  METTRE-EN-LIGNE.txt.

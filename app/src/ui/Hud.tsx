@@ -5,7 +5,7 @@ import { useUI } from '../store/ui';
 import { telemetry } from '../scene/telemetry';
 import { TYPE_ACCENT } from '../lib/color';
 import { fmtClock, fmtRelative, fmtTime, slotEndTs, slotStartTs } from '../lib/time';
-import { TYPE_PLURAL, type EntityType, type Slot } from '../types';
+import { hasProject, TYPE_PLURAL, type EntityType, type Slot } from '../types';
 import { cvar, Kbd } from './common';
 import { TagBar } from './TagBar';
 import { PresenceBar } from './Presence';
@@ -18,7 +18,7 @@ function Subtitle() {
   const mode = useSession((s) => s.mode);
   const role = useSession((s) => s.role);
   const ownerName = useSession((s) => s.ownerName);
-  const text = mode === 'local' || role === 'owner' ? 'réseau personnel · v5' : `cerveau ${deName(ownerName || 'ton hôte')} · invité · ${ROLE_LABEL[role]}`;
+  const text = mode === 'local' || role === 'owner' ? 'réseau personnel · v6' : `cerveau ${deName(ownerName || 'ton hôte')} · invité · ${ROLE_LABEL[role]}`;
   return <div className="hud text-[9px] text-white/35 mt-1.5 ml-5 max-w-[320px] truncate">{text}</div>;
 }
 
@@ -29,7 +29,7 @@ function Legend() {
     useShallow((s) => {
       const c = { project: 0, task: 0, note: 0, slot: 0, links: 0 };
       for (const e of Object.values(s.entities)) c[e.type]++;
-      c.links = s.links.length + Object.values(s.entities).filter((e) => e.type === 'task' && e.projectId).length;
+      c.links = s.links.length + Object.values(s.entities).filter((e) => hasProject(e) && e.projectId).length;
       return c;
     }),
   );
@@ -65,10 +65,12 @@ function Legend() {
 function ViewTabs() {
   const view = useUI((s) => s.view);
   const setView = useUI((s) => s.setView);
-  const tabs: { v: typeof view; label: string; key: string }[] = [
-    { v: 'network', label: 'Réseau', key: 'ÉCHAP' },
-    { v: 'agenda', label: 'Emploi du temps', key: 'TAB' },
-    { v: 'tasks', label: 'Tâches', key: '⇧TAB' },
+  // sur téléphone, des noms courts : les quatre vues tiennent sous le pouce
+  const tabs: { v: typeof view; label: string; short: string; key: string }[] = [
+    { v: 'network', label: 'Réseau', short: 'Réseau', key: 'ÉCHAP' },
+    { v: 'agenda', label: 'Emploi du temps', short: 'Agenda', key: 'TAB' },
+    { v: 'tasks', label: 'Tâches', short: 'Tâches', key: '⇧TAB' },
+    { v: 'notes', label: 'Notes', short: 'Notes', key: '' },
   ];
   return (
     <div className="glass flex pointer-events-auto" data-ui style={cvar('#00e5ff')}>
@@ -76,12 +78,14 @@ function ViewTabs() {
         <button
           key={t.v}
           onClick={() => setView(t.v)}
-          className={`hud text-[10.5px] whitespace-nowrap px-4 py-2 max-md:text-[9.5px] max-md:tracking-[0.08em] max-md:px-2.5 max-md:py-2.5 flex items-center gap-2 transition-colors ${
+          data-view-tab={t.v}
+          className={`hud text-[10.5px] whitespace-nowrap px-4 max-xl:px-3 py-2 max-md:text-[9.5px] max-md:tracking-[0.08em] max-md:px-2.5 max-md:py-2.5 flex items-center gap-2 transition-colors ${
             view === t.v ? 'text-[rgb(var(--c))] bg-[rgb(var(--c)/0.1)] shadow-[inset_0_-1px_0_rgb(var(--c))]' : 'text-white/50 hover:text-white'
           }`}
         >
-          {t.label}
-          <span className="text-[8.5px] text-white/30 max-md:hidden">{t.key}</span>
+          <span className="max-lg:hidden">{t.label}</span>
+          <span className="lg:hidden">{t.short}</span>
+          {t.key && <span className="text-[8.5px] text-white/30 max-xl:hidden">{t.key}</span>}
         </button>
       ))}
     </div>

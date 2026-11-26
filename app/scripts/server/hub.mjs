@@ -5,7 +5,7 @@
 //     cas des adresses gratuites trycloudflare.com, qui ne laissent pas passer les Server-Sent Events.
 import { initialsOf, json, randomToken } from './util.mjs';
 
-const VIEWS = new Set(['network', 'agenda', 'tasks']);
+const VIEWS = new Set(['network', 'agenda', 'tasks', 'notes']);
 /** Une requête en attente revient vide au bout de ce délai (bien en dessous des 100 s de Cloudflare) */
 const POLL_HOLD_MS = 25_000;
 /** Sans nouvelle requête depuis ce délai, la fenêtre est considérée comme fermée */
@@ -384,11 +384,16 @@ export class Hub {
   toOwners(event, data) {
     for (const c of this.clients.values()) if (c.member.id === 'owner') this.write(c, event, data);
   }
+  /**
+   * Signe de vie toutes les 15 s, en vrai évènement : la fenêtre sait ainsi que la connexion tient. Sans nouvelles
+   * pendant 45 s (passage du Wi-Fi au câble ou à la 4G, mise en veille), elle se rebranche toute seule.
+   */
   ping() {
+    const msg = `event: ping\ndata: {"t":${Date.now()}}\n\n`;
     for (const c of this.clients.values()) {
       if (c.kind !== 'sse') continue;
       try {
-        c.res.write(': ping\n\n');
+        c.res.write(msg);
       } catch {}
     }
   }

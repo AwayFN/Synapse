@@ -2,7 +2,26 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { Hello, InviteInfo, SignupInfo } from '../sync/boot';
 import { api, ApiError } from '../sync/client';
 import { deName, ROLE_HINT_GUEST, ROLE_LABEL, useSession } from '../sync/session';
-import { Corners } from './common';
+import { android, androidDownloadUrl, isAndroidApp } from '../sync/native';
+import { LEVEL, useBackLayer } from '../lib/back';
+import { Corners, cvar } from './common';
+
+/** Cet appareil s'est déjà connecté à Synapse (sinon, le premier écran propose de créer son compte) */
+const KNOWN_KEY = 'synapse-appareil-connu';
+const deviceKnown = () => {
+  try {
+    return localStorage.getItem(KNOWN_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+export const rememberDevice = () => {
+  try {
+    localStorage.setItem(KNOWN_KEY, '1');
+  } catch {
+    /* pas grave */
+  }
+};
 
 /** Écrans d'entrée : chargement, connexion, inscription, invitation, installation, maintenance… */
 function Frame({ children, wide }: { children: ReactNode; wide?: boolean }) {
@@ -77,6 +96,7 @@ function authMessage(e: unknown, creator: string): string {
 /** Conditions d'utilisation et confidentialité (texte choisi par le créateur) */
 function Terms({ onClose }: { onClose: () => void }) {
   const [text, setText] = useState<string | null>(null);
+  useBackLayer(true, onClose, LEVEL.terms);
   useEffect(() => {
     api<{ text: string }>('/api/terms')
       .then((r) => setText(r.text))
@@ -127,6 +147,7 @@ function AccountForm({
     try {
       if (signup) await api('/api/auth/signup', { name, email, password, terms, ...extra });
       else await api('/api/auth/login', { email, password });
+      rememberDevice();
       await onDone();
     } catch (e) {
       setError(authMessage(e, creator));
@@ -202,7 +223,9 @@ const codeFrom = (s: string) => {
 export function AuthScreen({ hello, code: initialCode, codeInfo, linkError }: { hello: Hello; code?: string; codeInfo?: SignupInfo; linkError?: boolean }) {
   const reg = hello.server.registration;
   const creator = hello.server.creatorName || 'le créateur';
-  const [tab, setTab] = useState<'login' | 'signup'>(initialCode ? 'signup' : 'login');
+  // un appareil qui n'est encore jamais venu : la première chose à faire, c'est créer son compte
+  const fresh = !deviceKnown();
+  const [tab, setTab] = useState<'login' | 'signup'>(initialCode || (fresh && reg !== 'fermee') ? 'signup' : 'login');
   const [code, setCode] = useState(initialCode ?? '');
   const [info, setInfo] = useState<SignupInfo | undefined>(codeInfo);
   const needCode = reg === 'invitation';
@@ -213,11 +236,15 @@ export function AuthScreen({ hello, code: initialCode, codeInfo, linkError }: { 
     setInfo(await api<SignupInfo>('/api/signup/info', { code: c }).catch(() => undefined));
   };
   const done = () => location.replace('/');
+  const phoneBrowser = !isAndroidApp() && /Android/i.test(navigator.userAgent) && !!hello.server.depot;
   return (
     <Frame>
-      <div className="hud text-[10px] text-white/45 mt-7">{hello.server.name !== 'Synapse' ? hello.server.name : 'Ton second cerveau, en 3D'}</div>
-      <div className="text-[14px] text-white/60 mt-2 leading-relaxed">
-        Capture tes pensées sans effort, relie-les, retrouve-les en volant dans ton réseau. Seul, ou à plusieurs.
+      <div className="hud text-[10px] text-[#00e5ff] mt-7">{fresh ? 'Bienvenue sur Synapse' : hello.server.name !== 'Synapse' ? hello.server.name : 'Ton second cerveau, en 3D'}</div>
+      <div className="text-[22px] font-semibold tracking-tight text-white mt-1.5">{tab === 'signup' ? 'Crée ton compte' : 'Connecte-toi'}</div>
+      <div className="text-[13.5px] text-white/60 mt-2 leading-relaxed">
+        {tab === 'signup'
+          ? 'Ton réseau personnel en 3D : projets, tâches, notes et emploi du temps, tous reliés. Avec ton compte, tu retrouves tout sur ton PC et ton téléphone, en direct.'
+          : 'Avec ton e-mail et ton mot de passe : tu retrouves ton cerveau tel que tu l’as laissé, sur tous tes appareils.'}
       </div>
       {linkError && (
         <div className="text-[12.5px] text-[rgb(var(--alert))] mt-4 leading-relaxed">
@@ -225,11 +252,11 @@ export function AuthScreen({ hello, code: initialCode, codeInfo, linkError }: { 
         </div>
       )}
       <div className="seg w-fit mt-6">
-        <button data-on={tab === 'login' ? '1' : '0'} onClick={() => setTab('login')}>
-          Se connecter
-        </button>
         <button data-on={tab === 'signup' ? '1' : '0'} onClick={() => setTab('signup')}>
           Créer un compte
+        </button>
+        <button data-on={tab === 'login' ? '1' : '0'} onClick={() => setTab('login')}>
+          J’ai déjà un compte
         </button>
       </div>
       <div className="mt-5">
@@ -272,9 +299,124 @@ export function AuthScreen({ hello, code: initialCode, codeInfo, linkError }: { 
           </div>
         )}
       </div>
+      {phoneBrowser && (
+        <a
+          className="btn btn-primary mt-6 inline-flex"
+          href={androidDownloadUrl(hello.server.depot!)}
+          rel="noopener noreferrer"
+          style={cvar('#39ff88')}
+        >
+          ↓ Télécharger l’application Android
+        </a>
+      )}
       <div className="text-[11px] text-white/32 mt-6 leading-relaxed">
-        Serveur Synapse de <span className="text-white/55">{hello.server.creatorName || 'son créateur'}</span>. Ton cerveau y est enregistré ; tu peux l’exporter ou supprimer ton compte quand
-        tu veux.
+        Serveur Synapse de <span className="text-white/55">{hello.server.creatorName || 'son créateur'}</span>. Ton cerveau y est enregistré ; tu restes connecté sur cet appareil
+        jusqu’à « Se déconnecter ». Tu peux exporter tes données ou supprimer ton compte quand tu veux.
+      </div>
+    </Frame>
+  );
+}
+
+/**
+ * L'ancien compte de ce PC (reconnu sans mot de passe dans les premières versions) choisit son e-mail et son mot
+ * de passe, une seule fois : ensuite on se connecte comme partout, et on le retrouve sur son téléphone.
+ */
+export function ClaimScreen({ hello }: { hello: Hello }) {
+  const [name, setName] = useState(hello.server.creatorName || '');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const submit = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api('/api/auth/claim', { name, email, password });
+      rememberDevice();
+      location.replace('/');
+    } catch (e) {
+      setError(authMessage(e, 'le créateur'));
+      setBusy(false);
+    }
+  };
+  return (
+    <Frame wide>
+      <div className="hud text-[10px] text-[#00e5ff] mt-7">Nouvelle version · ton compte</div>
+      <div className="text-[22px] font-semibold tracking-tight text-white mt-1.5">Choisis ton e-mail et ton mot de passe</div>
+      <div className="text-[13.5px] text-white/60 mt-2 leading-relaxed">
+        Ton cerveau reste tel quel. Désormais, on se connecte avec un compte, sur ce PC comme sur ton téléphone : tu restes connecté jusqu’à « Se déconnecter ».
+      </div>
+      <form
+        className="mt-6 flex flex-col gap-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+      >
+        <label className="flex flex-col gap-1.5">
+          <span className="xs-label">Ton prénom</span>
+          <input className="field !text-[14px] !py-2" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} autoComplete="given-name" />
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="xs-label">Adresse e-mail</span>
+          <input className="field !text-[14px] !py-2" type="email" value={email} onChange={(e) => setEmail(e.target.value)} maxLength={120} autoComplete="email" autoFocus />
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="xs-label">Mot de passe (8 caractères au moins)</span>
+          <input className="field !text-[14px] !py-2" type="password" value={password} onChange={(e) => setPassword(e.target.value)} maxLength={200} autoComplete="new-password" />
+        </label>
+        {error && <div className="text-[12.5px] text-[rgb(var(--alert))]">{error}</div>}
+        <button type="submit" className="btn btn-primary !py-2.5 !text-[11px] mt-1" disabled={busy || !name.trim() || !email.trim() || password.length < 8}>
+          {busy ? 'Un instant…' : 'Enregistrer et continuer →'}
+        </button>
+      </form>
+    </Frame>
+  );
+}
+
+/**
+ * Le serveur ne répond pas (Synapse central éteint, réseau coupé), ou c'est une autre version : on attend, et on
+ * réessaie tout seul. Dans l'application Android, elle cherche aussi la nouvelle adresse du serveur.
+ */
+export function UnreachableScreen({ reason }: { reason: 'server' | 'version' | 'old-server' }) {
+  const [tries, setTries] = useState(0);
+  useEffect(() => {
+    if (reason === 'version') return;
+    // le serveur revient (ou le PC a relancé Synapse dans sa nouvelle version) : la page s'ouvre toute seule
+    const t = window.setInterval(async () => {
+      setTries((n) => n + 1);
+      try {
+        const r = await fetch('/api/health', { cache: 'no-store' });
+        const j = r.ok ? ((await r.json()) as { proto?: number }) : null;
+        if (j && (reason === 'server' || j.proto === 6)) location.reload();
+      } catch {
+        /* toujours pas */
+      }
+    }, 5000);
+    return () => window.clearInterval(t);
+  }, [reason]);
+  const app = android();
+  return (
+    <Frame>
+      <div className="hud text-[10px] text-[rgb(var(--alert))] mt-7">{reason === 'server' ? 'Connexion' : 'Mise à jour'}</div>
+      <div className="text-[15px] text-white/75 mt-2 leading-relaxed">
+        {reason === 'version'
+          ? 'Le serveur Synapse vient d’être mis à jour : recharge la page pour utiliser la nouvelle version.'
+          : reason === 'old-server'
+            ? 'Synapse a été mis à jour, mais l’ancienne version tourne encore sur l’ordinateur qui l’héberge. Sur ce PC : double-clique sur « Lancer Synapse » (la nouvelle version remplace l’ancienne). Cette page s’ouvrira toute seule.'
+            : 'Le serveur Synapse ne répond pas pour l’instant : l’ordinateur qui l’héberge est peut-être éteint, ou la connexion est coupée. Nouvel essai automatique toutes les 5 secondes.'}
+      </div>
+      {reason === 'server' && tries > 0 && <div className="mono text-[10px] text-white/35 mt-3">Essai n° {tries + 1}…</div>}
+      <div className="flex gap-2 mt-6 flex-wrap">
+        <button className="btn btn-primary" onClick={() => location.reload()}>
+          {reason === 'version' ? 'Recharger' : 'Réessayer maintenant'}
+        </button>
+        {app?.changeServer && (
+          <button className="btn btn-ghost" onClick={() => app.changeServer?.()}>
+            Changer de serveur
+          </button>
+        )}
       </div>
     </Frame>
   );
@@ -296,6 +438,7 @@ export function FirstRunScreen({ hello }: { hello: Hello }) {
     setError(null);
     try {
       await api('/api/auth/first', { name, email, password });
+      rememberDevice();
       location.replace('/');
     } catch (e) {
       setError(authMessage(e, hello.server.creatorName || 'le créateur'));
@@ -308,7 +451,7 @@ export function FirstRunScreen({ hello }: { hello: Hello }) {
       <div className="text-[24px] font-semibold tracking-tight text-white mt-1.5">Crée ton compte Synapse</div>
       <div className="text-[13.5px] text-white/60 mt-2 leading-relaxed">
         Synapse, c’est ton réseau personnel en 3D : tes projets, tes tâches, tes notes et ton emploi du temps, tous reliés. Ton cerveau est enregistré sur cet
-        ordinateur. Ton compte te sert aussi à le retrouver sur ton téléphone, et à rejoindre le cerveau d’un ami.
+        ordinateur. Ton compte te sert aussi à le retrouver sur ton téléphone, et à rejoindre le cerveau d’un ami. Tu restes connecté jusqu’à « Se déconnecter ».
       </div>
       <form
         className="mt-6 flex flex-col gap-3"
@@ -356,6 +499,7 @@ export function JoinScreen({ token, info, hello }: { token: string; info: Invite
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(info.ok ? null : info.reason ?? 'unknown');
   const [path, setPath] = useState<'choose' | 'signup' | 'login'>(info.back === 'account' && !hello.account ? 'login' : 'choose');
+  useBackLayer(path !== 'choose', () => setPath('choose'), LEVEL.dialog);
   const owner = info.ownerName || 'son propriétaire';
   const account = hello.account;
   const go = () => location.replace(`/?cerveau=${encodeURIComponent(info.brainId || '')}`);
@@ -368,6 +512,7 @@ export function JoinScreen({ token, info, hello }: { token: string; info: Invite
     setBusy(true);
     try {
       await api('/api/join', { token, name: name.trim() });
+      rememberDevice();
       go();
     } catch (e) {
       const reason = (errorOf(e) as { error?: string }).error ?? 'unknown';
@@ -681,7 +826,8 @@ export function SessionOverlay() {
   }
   if (mode === 'suspended') return <Blocker title="Compte suspendu" text="Ton compte vient d’être suspendu par l’équipe de Synapse." action={home('Fermer')} />;
   if (mode === 'deleted') return <Blocker title="Compte supprimé" text="Ce compte a été supprimé. Son cerveau sera effacé définitivement sous 30 jours." action={home('Fermer')} />;
-  if (mode === 'loggedout') return <Blocker title="Déconnecté" text="Ta session s’est terminée (déconnexion depuis un autre appareil, ou nouveau mot de passe)." action={home('Se reconnecter')} alert={false} />;
+  if (mode === 'loggedout')
+    return <Blocker title="Déconnecté" text="Ta session s’est terminée (déconnexion depuis un autre appareil, ou nouveau mot de passe). Reconnecte-toi avec ton e-mail et ton mot de passe : tout est là." action={home('Se reconnecter')} alert={false} />;
   if (mode === 'maintenance')
     return <Blocker title="Maintenance" text={`Synapse fait une petite pause pour s’améliorer.${message ? ` ${message}` : ''} La reconnexion se fera toute seule.`} action={home('Réessayer')} alert={false} />;
   if (mode !== 'offline' && mode !== 'closed' && mode !== 'connecting') return null;
@@ -691,7 +837,7 @@ export function SessionOverlay() {
       : mode === 'connecting'
         ? 'Connexion au cerveau…'
         : role === 'owner'
-          ? 'Serveur Synapse injoignable · tes modifications attendent et partiront à la reconnexion'
+          ? 'Reconnexion au serveur… · tes modifications sont gardées et partiront toutes seules'
           : `Connexion perdue avec le cerveau ${deName(ownerName || 'ton hôte')} · reconnexion…`;
   return (
     <div className="fixed left-1/2 -translate-x-1/2 top-[86px] z-[70] glass px-4 py-2 flex items-center gap-2.5 pointer-events-none" data-ui>

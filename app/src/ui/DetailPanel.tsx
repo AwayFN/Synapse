@@ -2,11 +2,10 @@ import { useEffect, useState } from 'react';
 import { useData } from '../store/data';
 import { removeWithUndo, useUI } from '../store/ui';
 import { shortCode } from '../lib/random';
-import { excerpt } from '../lib/text';
 import { fmtStamp } from '../lib/time';
-import { TYPE_LABEL, type Entity } from '../types';
+import { tagsOf, TYPE_LABEL, type Entity } from '../types';
 import { Corners, cvar, Kbd } from './common';
-import { ColorSwatches, LinksSection, ProjectFields, Section, SlotFields, TagEditor, TaskFields } from './fields';
+import { BodyPreview, ColorSwatches, LinksSection, ProjectFields, ProjectSelect, Section, SlotFields, TagEditor, TaskFields } from './fields';
 import { useEditLock } from '../sync/lock';
 import { useSession } from '../sync/session';
 
@@ -31,7 +30,6 @@ function Body({ e }: { e: Entity }) {
   const update = useData((s) => s.update);
   const closePanel = useUI((s) => s.closePanel);
   const setFocus = useUI((s) => s.setFocus);
-  const openEditor = useUI((s) => s.openEditor);
   // partage : une seule personne modifie un élément à la fois ; « peut regarder » ne modifie rien
   const lock = useEditLock(e.id);
   const ro = !lock.canWrite;
@@ -77,24 +75,20 @@ function Body({ e }: { e: Entity }) {
           {e.type === 'task' && <TaskFields t={e} />}
           {e.type === 'slot' && <SlotFields s={e} />}
           {e.type === 'note' && (
-            <Section label="Tags">
-              <TagEditor note={e} />
-            </Section>
+            <>
+              <Section label="Projet">
+                <ProjectSelect value={e.projectId ?? null} onChange={(id) => update(e.id, { projectId: id })} empty="— Note indépendante —" />
+              </Section>
+              <Section label="Contenu">
+                <BodyPreview e={e} placeholder="Note vide : écris-la en grand." readOnly={ro} />
+              </Section>
+            </>
           )}
+          {/* des tags sur tout : projets, tâches, notes, créneaux */}
+          <Section label="Tags">
+            {ro ? <span className="mono text-[11px] text-white/55">{tagsOf(e).length ? tagsOf(e).map((t) => `#${t}`).join('  ') : '—'}</span> : <TagEditor id={e.id} tags={tagsOf(e)} />}
+          </Section>
         </fieldset>
-        {e.type === 'note' && (
-          <>
-            <Section label="Contenu">
-              <button
-                onClick={() => openEditor(e.id)}
-                className="w-full text-left text-[13px] leading-relaxed text-white/60 border border-white/[0.08] p-3 hover:border-[rgb(var(--c)/0.6)] transition-colors"
-              >
-                {excerpt(e.content, 260) || <span className="text-white/30">Note vide.</span>}
-                <div className="hud text-[9.5px] text-[rgb(var(--c))] mt-2">Ouvrir l'éditeur plein écran →</div>
-              </button>
-            </Section>
-          </>
-        )}
 
         <LinksSection id={e.id} readOnly={ro} />
 

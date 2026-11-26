@@ -6,6 +6,7 @@ import { Hud } from './ui/Hud';
 import { DetailPanel } from './ui/DetailPanel';
 import { KanbanView } from './ui/KanbanView';
 import { AgendaView } from './ui/AgendaView';
+import { NotesView } from './ui/NotesView';
 import { NoteEditor } from './ui/NoteEditor';
 import { CommandPalette } from './ui/CommandPalette';
 import { Toasts } from './ui/Toasts';
@@ -39,6 +40,7 @@ export function App() {
       <DetailPanel />
       <KanbanView />
       <AgendaView />
+      <NotesView />
       <NoteEditor />
       <CommandPalette />
       <ShareDialog />

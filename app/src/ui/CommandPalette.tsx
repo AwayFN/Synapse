@@ -3,12 +3,12 @@ import { displayTitle, useData } from '../store/data';
 import { useUI } from '../store/ui';
 import { fx } from '../store/fx';
 import { parseCommand, type Parsed } from '../lib/parse';
-import { matchScore } from '../lib/text';
+import { matchScore, normalizeTag } from '../lib/text';
 import { fmtDay, fmtTime, minutesNow, todayISO } from '../lib/time';
 import { TYPE_ACCENT } from '../lib/color';
 import { exportData, importData } from '../lib/io';
 import { newNote } from '../lib/actions';
-import { TYPE_LABEL, type Entity, type EntityType } from '../types';
+import { bodyOf, tagsOf, TYPE_LABEL, type Entity, type EntityType } from '../types';
 import { Corners, cvar, Kbd } from './common';
 import { TYPE_TAG } from './Labels';
 import { tagColor } from './TagBar';
@@ -31,30 +31,29 @@ function createFromParsed(p: Parsed): Entity | null {
   const d = useData.getState();
   const refs = p.refs.filter((r) => r.entity).map((r) => r.entity!) as Entity[];
   const today = todayISO();
+  // @Projet : le projet parent d'une tâche, d'une note ou d'un créneau ; les autres @ deviennent des liens
+  const proj = p.type !== 'project' ? refs.find((r) => r.type === 'project') : undefined;
+  const others = refs.filter((r) => r !== proj).map((r) => r.id);
   switch (p.type) {
     case 'note':
-      return d.createNote({ title: p.title, tags: p.tags }, { linkTo: refs.map((r) => r.id) });
+      return d.createNote({ title: p.title, tags: p.tags, projectId: proj?.id ?? null }, { linkTo: others });
     case 'task': {
-      const proj = refs.find((r) => r.type === 'project');
       const time = p.time ?? p.start;
-      return d.createTask(
-        { title: p.title, projectId: proj?.id ?? null, date: p.date ?? (time != null ? today : null), time },
-        { linkTo: refs.filter((r) => r !== proj).map((r) => r.id) },
-      );
+      return d.createTask({ title: p.title, projectId: proj?.id ?? null, date: p.date ?? (time != null ? today : null), time, tags: p.tags }, { linkTo: others });
     }
     case 'project':
-      return d.createProject({ title: p.title, deadline: p.date }, { linkTo: refs.map((r) => r.id) });
+      return d.createProject({ title: p.title, deadline: p.date, tags: p.tags }, { linkTo: refs.map((r) => r.id) });
     case 'slot': {
       const start = p.start ?? p.time ?? Math.min(1380, Math.ceil(minutesNow() / 15) * 15);
       const end = p.end ?? (start + 60) % 1440;
-      return d.createSlot({ title: p.title, date: p.date ?? today, start, end }, { linkTo: refs.map((r) => r.id) });
+      return d.createSlot({ title: p.title, date: p.date ?? today, start, end, projectId: proj?.id ?? null, tags: p.tags }, { linkTo: others });
     }
   }
 }
 
 function Preview({ p }: { p: Parsed }) {
   const items: ReactNode[] = [];
-  const proj = p.type === 'task' ? p.refs.find((r) => r.entity?.type === 'project')?.entity : undefined;
+  const proj = p.type && p.type !== 'project' ? p.refs.find((r) => r.entity?.type === 'project')?.entity : undefined;
   if (proj) items.push(<span key="proj" className="chip !text-[10px]" style={cvar(proj.color)}>↳ {displayTitle(proj)}</span>);
   if (p.type === 'slot') {
     const start = p.start ?? p.time;
@@ -109,6 +108,7 @@ function Palette() {
     const cmds: Row[] = [
       { kind: 'cmd', id: 'agenda', label: 'Vue agenda · emploi du temps', hint: 'TAB', run: () => ui.setView('agenda') },
       { kind: 'cmd', id: 'tasks', label: 'Vue tâches · kanban', hint: '⇧TAB', run: () => ui.setView('tasks') },
+      { kind: 'cmd', id: 'notes', label: 'Vue notes · toutes les notes, indépendantes ou par projet', run: () => ui.setView('notes') },
       { kind: 'cmd', id: 'network', label: 'Vue réseau', hint: 'ÉCHAP', run: () => ui.setView('network') },
       { kind: 'cmd', id: 'overview', label: "Vue d'ensemble · recentrer la caméra", hint: 'H', run: () => { ui.setView('network'); fx.emit({ kind: 'overview' }); } },
       { kind: 'cmd', id: 'newnote', label: 'Nouvelle note vide', hint: 'CTRL N', run: () => newNote() },
@@ -144,8 +144,17 @@ function Palette() {
     // entity search (skip when clearly writing a create command)
     const searchQ = parsed.type ? '' : query.replace(/^>/, '');
     if (searchQ) {
+      // « #tag » : tout ce qui porte ce tag (projets, tâches, notes, créneaux)
+      const tagQ = /^#\S+$/.test(searchQ) ? normalizeTag(searchQ) : '';
       const found = Object.values(entities)
-        .map((e) => ({ e, s: Math.max(matchScore(searchQ, displayTitle(e)), e.type === 'note' ? matchScore(searchQ, e.content) * 0.5 : 0) }))
+        .map((e) => ({
+          e,
+          s: tagQ
+            ? tagsOf(e).some((t) => t.startsWith(tagQ))
+              ? 90
+              : 0
+            : Math.max(matchScore(searchQ, displayTitle(e)), matchScore(searchQ, bodyOf(e)) * 0.5, matchScore(searchQ, tagsOf(e).join(' ')) * 0.7),
+        }))
         .filter((x) => x.s > 0)
         .sort((a, b) => b.s - a.s || b.e.updatedAt - a.e.updatedAt)
         .slice(0, 7);

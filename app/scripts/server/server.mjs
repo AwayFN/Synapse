@@ -1,10 +1,13 @@
-// Serveur Synapse (V4) : sert l'application, garde le cerveau de chacun, le partage, et donne au créateur
-// une vue d'ensemble de son serveur (l'espace créateur).
+// Serveur Synapse (V6) : sert l'application, garde le cerveau de chacun, le partage, et donne au créateur
+// une vue d'ensemble de son serveur (l'espace admin). C'est le « Synapse central » : les applications (PC
+// Windows, téléphones Android) s'y connectent toutes, chacune avec son compte.
 //
 // Qui est qui :
-//   - sur le PC qui fait tourner Synapse, une requête de cet ordinateur (boucle locale, adressée à « localhost »,
-//     sans intermédiaire) est le créateur : il n'a rien à saisir ;
-//   - un compte = un cookie de session (HttpOnly), obtenu en se connectant (e-mail + mot de passe) ;
+//   - un compte = un cookie de session (HttpOnly), obtenu en créant son compte ou en se connectant (e-mail + mot
+//     de passe). Partout, y compris sur le PC qui fait tourner Synapse : on reste connecté (la session se prolonge
+//     à chaque visite) jusqu'à « Se déconnecter » ; il faut alors se reconnecter ;
+//   - sur ce PC (boucle locale, adressée à « localhost », sans intermédiaire), le compte « de ce PC » ouvre en plus
+//     les accès (Wi-Fi, Internet) ;
 //   - un invité sans compte = un cookie propre à un cerveau, obtenu avec un lien d'invitation.
 // Chaque compte a son cerveau ; il peut y inviter d'autres personnes (avec ou sans compte), avec un rôle et une zone.
 // Toute requête qui modifie quelque chose exige l'en-tête « X-Synapse: 1 » (protection CSRF).
@@ -17,9 +20,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { Access, cleanName, deName } from './access.mjs';
-import { Accounts, checkPassword, cleanEmail, hashPassword, isStaff, passwordProblem, SERVER_ROLES } from './accounts.mjs';
+import { Accounts, checkPassword, cleanEmail, deviceOf, hashPassword, isStaff, passwordProblem } from './accounts.mjs';
 import { Brain } from './brain.mjs';
 import { Hub } from './hub.mjs';
+import { Publisher, readCentral } from './publish.mjs';
 import { cleanUrl, Settings } from './settings.mjs';
 import { Share } from './share.mjs';
 import { dayKey, maskIp, Telemetry } from './telemetry.mjs';
@@ -41,8 +45,10 @@ import {
   safeEqual,
 } from './util.mjs';
 
-export const PROTO = 5;
+export const PROTO = 6;
 const ACCOUNT_COOKIE = 'synapse_a';
+/** le cookie de session vit le plus longtemps possible (400 jours, la limite des navigateurs), renouvelé à chaque visite */
+const SESSION_COOKIE_DAYS = 400;
 const LOCAL_NAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
 /**
  * Avec un accès ouvert, le serveur reste allumé (tes amis peuvent venir à tout moment) jusqu'à « Arrêter tout
@@ -98,6 +104,9 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
     feedback: new RateLimiter(10, 10 * 60_000),
   };
   const publicUrl = () => cleanUrl(process.env.SYNAPSE_URL_PUBLIQUE || '') || settings.d.publicUrl || '';
+  /** le dépôt GitHub de Synapse (central.json) : les applications y retrouvent l'adresse du serveur */
+  const appDir = path.dirname(dist);
+  const central = readCentral(appDir);
 
   // ───────────────────────── V3 → V4 : le cerveau unique devient celui du compte créateur
   // (Une nouvelle installation, elle, ne crée aucun compte : la personne crée le sien au premier lancement,
@@ -242,9 +251,20 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
         onChange: () => {
           trackAddress();
           notifyShare();
+          publisher?.check();
         },
         tunnel: () => ({ token: settings.d.tunnelToken, url: publicUrl() }),
       });
+  /** sur le PC du créateur : son adresse Internet est publiée sur GitHub, les applications la retrouvent */
+  const publisher = new Publisher({
+    appDir,
+    dataDir: root,
+    settings,
+    log,
+    hosted,
+    current: () => (share && share.net.state === 'on' && share.net.url) || null,
+    onChange: () => staffPing(),
+  });
 
   // ───────────────────────── qui fait la requête
   const hostnameOf = (req) => {
@@ -259,16 +279,15 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
     let account = null;
     let sessionHash = null;
     let suspended = false;
-    // sur ce PC, le compte de ce PC (créé au premier lancement) est reconnu sans mot de passe
-    if (local) account = accounts.pcAccount();
-    else if (cookies[ACCOUNT_COOKIE]) {
+    // V6 : partout (même sur ce PC), le compte vient de la session ; « Se déconnecter » demande de se reconnecter
+    if (cookies[ACCOUNT_COOKIE]) {
       const r = accounts.session(cookies[ACCOUNT_COOKIE]);
       if (r) {
         account = r.account;
         sessionHash = r.hash;
       }
     }
-    if (account && account.status === 'suspendu' && !local) {
+    if (account && account.status === 'suspendu') {
       suspended = true;
       account = null;
     }
@@ -276,7 +295,26 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       accounts.touch(account);
       tele.active(account.id);
     }
-    return { local, account, cookies, sessionHash, suspended, ip: clientAddress(req, hosted), via: share ? share.via(req) : 'internet' };
+    return { local, account, cookies, sessionHash, suspended, ip: clientAddress(req, hosted), via: share ? share.via(req) : 'internet', device: deviceOf(req) };
+  }
+
+  /**
+   * Passage à la V6 sur le PC du créateur : il était reconnu sans mot de passe. La première fois, on lui ouvre une
+   * session sans rien lui demander (il ne voit aucune différence) ; ensuite, comme partout, après « Se déconnecter »
+   * il se reconnecte. Un ancien compte sans mot de passe en choisit d'abord un (écran « claim »).
+   */
+  function localGrant(req, w) {
+    if (hosted || !w.local || w.account || w.suspended || settings.d.localGrant) return null;
+    const pc = accounts.pcAccount();
+    if (!pc || !pc.pass || pc.status === 'suspendu') return null;
+    const token = accounts.newSession(pc.id, { ...w.device, via: w.via });
+    settings.set({ localGrant: true });
+    w.account = pc;
+    w.sessionHash = null;
+    accounts.touch(pc);
+    tele.active(pc.id);
+    log('V6 : session ouverte pour le compte de ce PC (passage à la V6)');
+    return sessionCookie(req, token);
   }
 
   function memberOf(e, w) {
@@ -347,7 +385,9 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
   }
 
   const cookieAttrs = (req, days) => `Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.round(days * 86400)}${isHttps(req) ? '; Secure' : ''}`;
-  const sessionCookie = (req, token) => `${ACCOUNT_COOKIE}=${token}; ${cookieAttrs(req, 90)}`;
+  const sessionCookie = (req, token) => `${ACCOUNT_COOKIE}=${token}; ${cookieAttrs(req, SESSION_COOKIE_DAYS)}`;
+  /** une nouvelle session pour cette requête (avec l'appareil : application Android, application Windows, navigateur) */
+  const openSession = (req, w, accountId) => accounts.newSession(accountId, { ...(w.device || deviceOf(req)), via: w.via });
   const dropCookie = (name) => `${name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`;
 
   const accountSelf = (a, w) => ({
@@ -369,13 +409,18 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
     // le responsable de ce serveur : son créateur, ou à défaut la personne de ce PC
     const creator = accounts.creator() || (hosted ? null : accounts.pcAccount());
     const used = w.account ? accounts.signupsCreatedBy(w.account.id, 30 * DAY).length : 0;
+    const pc = hosted ? null : accounts.pcAccount();
     return {
       hosted,
       name: s.appName || 'Synapse',
       registration: s.registration,
       setup: hosted && !accounts.creator(),
       /** nouvelle installation : la personne devant ce PC crée son compte (un compte normal) */
-      firstRun: !hosted && !accounts.pcAccount() && !!w.local,
+      firstRun: !hosted && !pc && !!w.local,
+      /** l'ancien compte de ce PC n'a pas encore de mot de passe : il en choisit un (une fois) */
+      claim: !!(w.local && !w.account && pc && !pc.pass),
+      /** le dépôt GitHub de Synapse : l'application Android s'y télécharge */
+      depot: central?.depot || null,
       creatorName: creator?.name || '',
       maintenance: s.maintenance.on ? s.maintenance.message || '' : null,
       announcement: s.announcement.text ? { id: s.announcement.id, text: s.announcement.text, level: s.announcement.level } : null,
@@ -392,17 +437,25 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
   // ───────────────────────── vue d'ensemble pour l'espace créateur
   function onlineNow() {
     const on = new Set();
+    /** accountId → les appareils ouverts en ce moment (android, windows, navigateur) */
+    const apps = new Map();
+    /** les sessions (appareils) ouvertes en ce moment */
+    const sessions = new Set();
     let guests = 0;
     let windows = 0;
     for (const e of entries.values()) {
       for (const c of e.hub.clients.values()) {
         windows++;
         const id = c.accountId || c.member.accountId;
-        if (id) on.add(id);
-        else guests++;
+        if (id) {
+          on.add(id);
+          if (!apps.has(id)) apps.set(id, new Set());
+          apps.get(id).add(c.app || 'navigateur');
+          if (c.session) sessions.add(c.session);
+        } else guests++;
       }
     }
-    return { accounts: on, guests, windows };
+    return { accounts: on, apps, sessions, guests, windows };
   }
   function brainStats(a) {
     const live = entries.get(a.brainId);
@@ -457,6 +510,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       },
       active: { today: tele.uniqueActive(1), d7: tele.uniqueActive(7), d30: tele.uniqueActive(30) },
       online: { accounts: on.accounts.size, guests: on.guests, windows: on.windows },
+      devices: deviceTotals(),
       content: { brains: list.length, nonEmpty, neurons, links, shared: sharedBrains, members, invites },
       storage: storage(),
       feedback: { unread: tele.unreadFeedback(), total: tele.feedbackList().length },
@@ -491,10 +545,21 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
           joined: a.shared.length,
           sessions: sessions.length,
           device: sessions[0]?.ua || '',
+          /** ses appareils connectés (une session par appareil) : application Android, Windows, navigateur */
+          devices: sessions.slice(0, 12).map((s) => ({ app: s.app, ua: s.ua, createdAt: s.createdAt, lastSeen: s.lastSeen, online: on.sessions.has(s.hash) })),
+          /** où il est en ligne en ce moment */
+          onlineOn: [...(on.apps.get(a.id) || [])],
+          pc: !!a.pc,
           activeDays: tele.activeDaysOf(a.id, 30),
           online: on.accounts.has(a.id),
         };
       });
+  }
+  /** Combien d'appareils, de chaque sorte, ont une session ouverte (pour la vue d'ensemble) */
+  function deviceTotals() {
+    const t = { android: 0, windows: 0, navigateur: 0 };
+    for (const a of accounts.list()) for (const s of accounts.sessionsOf(a.id)) t[s.app in t ? s.app : 'navigateur']++;
+    return t;
   }
   function serverDetails(w) {
     const mem = process.memoryUsage();
@@ -514,6 +579,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       share: share ? share.status() : null,
       publicUrl: publicUrl() || null,
       envPublicUrl: !!process.env.SYNAPSE_URL_PUBLIQUE,
+      publication: publisher.status(),
     };
   }
 
@@ -604,9 +670,16 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
     if (pathname === '/api/health') return send(200, { ok: true, proto: PROTO });
     if (pathname === '/api/hello') {
       tele.bump('vis');
-      const e = maint ? null : targetBrain(w, url);
+      // passage à la V6 sur le PC du créateur (une seule fois), sinon : la session se prolonge à chaque visite
+      let cookie = localGrant(req, w);
+      if (!cookie && w.account && w.sessionHash) {
+        cookie = sessionCookie(req, w.cookies[ACCOUNT_COOKIE]);
+        accounts.touchDevice(w.sessionHash, w.device);
+      }
+      const e = maint && !isStaff(w.account) ? null : targetBrain(w, url);
       const m = e ? memberOf(e, w) : null;
       const isOwner = m?.role === 'owner';
+      const extra = cookie ? { 'Set-Cookie': cookie } : undefined;
       return send(200, {
         app: 'synapse',
         proto: PROTO,
@@ -621,7 +694,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
         role: m?.role ?? null,
         me: m ? { id: m.id, name: m.name } : null,
         empty: isOwner ? !e.brain.exists : undefined,
-      });
+      }, extra);
     }
     if (pathname === '/api/terms') {
       const name = (accounts.creator() || accounts.pcAccount())?.name || 'le créateur de Synapse';
@@ -746,10 +819,10 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
           brainJoin.e.hub.toOwners('share', shareStatus(brainJoin.e));
         }
       }
-      const token = accounts.newSession(a.id, { ua: req.headers['user-agent'], via: w.via });
+      const token = openSession(req, w, a.id);
       tele.bump('su');
       tele.active(a.id);
-      const how = via === 'invitation' ? 'avec une invitation' : via === 'cerveau' ? 'invité dans un cerveau' : 'inscription libre';
+      const how = (via === 'invitation' ? 'avec une invitation' : via === 'cerveau' ? 'invité dans un cerveau' : 'inscription libre') + (w.device.app === 'android' ? ', application Android' : w.device.app === 'windows' ? ', application Windows' : '');
       tele.event('inscription', `${a.name} a créé son compte (${how})`, a, maskIp(w.ip));
       staffPing();
       return send(200, { ok: true, brainId: brainJoin?.e.id || a.brainId }, { 'Set-Cookie': sessionCookie(req, token) });
@@ -769,16 +842,46 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       if (a.status === 'suspendu') return send(403, { error: 'suspended' });
       if (settings.d.maintenance.on && !isStaff(a)) return send(503, { error: 'maintenance' });
       accounts.clearFails(a.id);
-      const token = accounts.newSession(a.id, { ua: req.headers['user-agent'], via: w.via });
+      const token = openSession(req, w, a.id);
+      if (w.local && !settings.d.localGrant) settings.set({ localGrant: true });
       tele.bump('log');
       tele.active(a.id);
-      tele.event('connexion', `connexion de ${a.name}`, a, maskIp(w.ip));
+      tele.event('connexion', `connexion de ${a.name}${w.device.app !== 'navigateur' ? ` (application ${w.device.app === 'android' ? 'Android' : 'Windows'})` : ''}`, a, maskIp(w.ip));
       return send(200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
     }
     if (pathname === '/api/auth/logout') {
       if (mustPost()) return;
       if (w.cookies[ACCOUNT_COOKIE]) accounts.endSession(w.cookies[ACCOUNT_COOKIE]);
+      // après une déconnexion sur ce PC, il faut se reconnecter (plus jamais de session offerte)
+      if (w.local && !settings.d.localGrant) settings.set({ localGrant: true });
+      if (w.account) tele.event('connexion', `${w.account.name || 'créateur'} s’est déconnecté`, w.account);
       return send(200, { ok: true }, { 'Set-Cookie': dropCookie(ACCOUNT_COOKIE) });
+    }
+    // ── ancien compte de ce PC sans mot de passe (V3) : il choisit son e-mail et son mot de passe, une fois
+    if (pathname === '/api/auth/claim') {
+      if (mustPost()) return;
+      const pc = hosted ? null : accounts.pcAccount();
+      if (!w.local || !pc || pc.pass) return send(403, { error: 'setup' });
+      const name = body.name !== undefined ? cleanName(body.name, '') : pc.name;
+      const email = cleanEmail(body.email);
+      const pp = passwordProblem(body.password);
+      if (!name) return send(400, { error: 'name' });
+      if (!email) return send(400, { error: 'email' });
+      if (pp) return send(400, { error: 'password', message: pp });
+      const other = accounts.byEmail(email);
+      if (other && other.id !== pc.id) return send(409, { error: 'exists' });
+      const pass = await hashPassword(body.password);
+      if (pc.pass) return send(403, { error: 'setup' });
+      const renamed = name !== pc.name;
+      pc.name = name;
+      pc.email = email;
+      pc.pass = pass;
+      accounts.flush();
+      if (renamed) renameEverywhere(pc);
+      settings.set({ localGrant: true });
+      tele.event('compte', `${pc.name} a choisi son e-mail et son mot de passe (compte de ce PC)`, pc);
+      const token = openSession(req, w, pc.id);
+      return send(200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
     }
     // ── nouvelle installation : la personne devant ce PC crée son compte (un compte normal, pas admin)
     if (pathname === '/api/auth/first') {
@@ -795,8 +898,9 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       if (accounts.pcAccount()) return send(403, { error: 'setup' });
       const a = accounts.create({ name, email, pass, role: 'membre', via: 'installation', pc: true });
       accounts.flush();
+      settings.set({ localGrant: true });
       tele.event('compte', `${a.name} a créé son compte (installation de Synapse)`, a);
-      const token = accounts.newSession(a.id, { ua: req.headers['user-agent'], via: w.via });
+      const token = openSession(req, w, a.id);
       return send(200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
     }
     if (pathname === '/api/auth/setup') {
@@ -815,7 +919,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       setupToken = null;
       accounts.flush();
       tele.event('serveur', `compte créateur créé : ${a.name}`, a, maskIp(w.ip));
-      const token = accounts.newSession(a.id, { ua: req.headers['user-agent'], via: w.via });
+      const token = openSession(req, w, a.id);
       return send(200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
     }
     if (pathname === '/api/auth/reset/info' || pathname === '/api/auth/reset') {
@@ -832,7 +936,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       accounts.clearFails(r.account.id);
       kickAccount(r.account.id, 'logout');
       tele.event('compte', `mot de passe réinitialisé : ${r.account.name}`, r.account, maskIp(w.ip));
-      const token = accounts.newSession(r.account.id, { ua: req.headers['user-agent'], via: w.via });
+      const token = openSession(req, w, r.account.id);
       return send(200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
     }
 
@@ -845,7 +949,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       if (r.account.status === 'suspendu') return send(403, { error: 'suspended' });
       if (settings.d.maintenance.on && !isStaff(r.account)) return send(503, { error: 'maintenance' });
       accounts.consumeLoginLink(r.hash);
-      const token = accounts.newSession(r.account.id, { ua: req.headers['user-agent'], via: w.via });
+      const token = openSession(req, w, r.account.id);
       tele.bump('log');
       tele.active(r.account.id);
       tele.event('connexion', `connexion de ${r.account.name || 'créateur'} sur un autre appareil (QR code)`, r.account, maskIp(w.ip));
@@ -902,7 +1006,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
             const pp = passwordProblem(body.password);
             if (pp) return send(400, { error: 'password', message: pp });
             if (!a.email) return send(400, { error: 'email-first' });
-            if (a.pass && !w.local && !(await checkPassword(String(body.current ?? ''), a.pass))) return send(401, { error: 'current' });
+            if (a.pass && !(await checkPassword(String(body.current ?? ''), a.pass))) return send(401, { error: 'current' });
             a.pass = await hashPassword(body.password);
             accounts.endAll(a.id, w.sessionHash);
             changes.push('mot de passe');
@@ -937,7 +1041,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
         }
         case '/api/account/delete': {
           if (a.role === 'createur' && accounts.activeCreators().length <= 1) return send(409, { error: 'last-creator' });
-          if (a.pass && !w.local && !(await checkPassword(String(body.password ?? ''), a.pass))) return send(401, { error: 'current' });
+          if (a.pass && !(await checkPassword(String(body.password ?? ''), a.pass))) return send(401, { error: 'current' });
           if (body.confirm !== 'SUPPRIMER') return send(400, { error: 'confirm' });
           deleteAccount(a, null);
           staffPing();
@@ -970,7 +1074,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
     if (!e || !m) return send(401, { error: 'auth' });
     if (maint) return send(503, { error: 'maintenance' });
     const isOwner = m.role === 'owner';
-    const extra = { via: w.via, accountId: w.account?.id || null };
+    const extra = { via: w.via, accountId: w.account?.id || null, app: w.device.app, session: w.sessionHash || null };
 
     switch (pathname) {
       case '/api/events': {
@@ -1167,11 +1271,23 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
           return send(200, settings.public());
         case '/api/admin/server':
           return send(200, serverDetails(w));
+        case '/api/admin/publication':
+          return send(200, publisher.status());
       }
       return send(404, { error: 'not found' });
     }
 
     switch (pathname) {
+      // ── l'adresse publiée sur GitHub pour les applications (PC du créateur)
+      case '/api/admin/publication': {
+        const st = publisher.setEnabled(!!body.on);
+        tele.event('serveur', body.on ? `${me.name || 'créateur'} a activé la publication de l’adresse sur GitHub` : `${me.name || 'créateur'} a coupé la publication de l’adresse sur GitHub`, me);
+        return send(200, st);
+      }
+      case '/api/admin/publication/now': {
+        if (!publisher.status().eligible) return send(409, { error: 'publication' });
+        return send(200, await publisher.publish(true));
+      }
       case '/api/admin/users/update': {
         const t = target();
         if (!t) return send(404, { error: 'missing' });
@@ -1342,6 +1458,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
         }
         return json(req, res, 200, {
           app: 'synapse',
+          mode: 'serveur',
           proto: PROTO,
           pid: process.pid,
           root: dist,
@@ -1462,6 +1579,9 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
         if (settings.d.share.lan) await share.startLan();
         if (settings.d.share.internet && share.toolReady()) share.startInternet(false);
       }
+      // l'adresse publiée pour les applications est-elle encore la bonne ? (sinon : publiée dès que l'accès est ouvert)
+      publisher.check(4000);
+      if (publisher.status().eligible) log(`publication de l'adresse : ${publisher.enabled ? 'active' : 'coupée'} (${central.depot})`);
       const tick = Math.min(5000, Math.max(250, (idleMs || 60_000) / 4));
       let lastPing = Date.now();
       let lastUnload = Date.now();
@@ -1469,7 +1589,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
         const now = Date.now();
         const on = onlineNow();
         tele.peak(on.accounts.size + on.guests);
-        if (now - lastPing > 20_000) {
+        if (now - lastPing > 15_000) {
           lastPing = now;
           for (const c of alive) c.write(': ping\n\n');
           for (const e of entries.values()) e.hub.ping();

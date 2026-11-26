@@ -17,6 +17,8 @@ interface BaseEntity {
   /** qui l'a créé / modifié en dernier (cerveau partagé) */
   createdBy?: string;
   updatedBy?: string;
+  /** V6 : des tags sur tout (projets, tâches, notes, créneaux) */
+  tags: string[];
 }
 
 export interface Project extends BaseEntity {
@@ -43,7 +45,8 @@ export interface Task extends BaseEntity {
 export interface Note extends BaseEntity {
   type: 'note';
   content: string;
-  tags: string[];
+  /** projet auquel la note appartient (null : note indépendante) */
+  projectId: string | null;
 }
 
 export interface Slot extends BaseEntity {
@@ -61,8 +64,14 @@ export interface Slot extends BaseEntity {
 
 export type Entity = Project | Task | Note | Slot;
 
-/** Les tâches et les créneaux peuvent appartenir à un projet (lien « parent ») */
-export const hasProject = (e: Entity | undefined | null): e is Task | Slot => !!e && (e.type === 'task' || e.type === 'slot');
+/** Les tâches, les créneaux et les notes peuvent appartenir à un projet (lien « parent ») ; sinon ils sont « indépendants » */
+export const hasProject = (e: Entity | undefined | null): e is Task | Slot | Note => !!e && (e.type === 'task' || e.type === 'slot' || e.type === 'note');
+
+/** Le texte long d'un élément : le contenu d'une note, la description des autres */
+export const bodyOf = (e: Entity): string => (e.type === 'note' ? e.content : e.description) ?? '';
+export const bodyKey = (e: Entity): 'content' | 'description' => (e.type === 'note' ? 'content' : 'description');
+/** Les tags d'un élément (les anciens éléments n'en avaient pas forcément) */
+export const tagsOf = (e: Entity | undefined | null): string[] => (e && Array.isArray(e.tags) ? e.tags : []);
 
 export interface Link {
   id: string;
@@ -79,7 +88,7 @@ export interface Activity {
   entityId?: string;
 }
 
-export type ViewMode = 'network' | 'agenda' | 'tasks';
+export type ViewMode = 'network' | 'agenda' | 'tasks' | 'notes';
 
 export const TYPE_LABEL: Record<EntityType, string> = {
   project: 'Projet',

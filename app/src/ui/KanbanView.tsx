@@ -3,8 +3,9 @@ import { useShallow } from 'zustand/react/shallow';
 import { displayTitle, useData } from '../store/data';
 import { useUI } from '../store/ui';
 import { fmtDay, fmtTime, todayISO } from '../lib/time';
-import type { Project, Task, TaskStatus } from '../types';
+import { tagsOf, type Project, type Task, type TaskStatus } from '../types';
 import { Corners, cvar, Kbd } from './common';
+import { tagColor } from './TagBar';
 
 const COLUMNS: { status: TaskStatus; label: string; color: string; hint: string }[] = [
   { status: 'todo', label: 'À faire', color: '#00e5ff', hint: 'file d’attente' },
@@ -50,13 +51,20 @@ function CardBody({ t }: { t: Task }) {
           {displayTitle(t)}
         </div>
       </div>
-      {(project || t.date || links > 0) && (
+      {(project || t.date || links > 0 || tagsOf(t).length > 0) && (
         <div className="flex flex-wrap items-center gap-1.5 mt-2.5 pl-[24px]">
           {project && (
             <span className="chip !text-[9.5px] !py-px" style={cvar(project.color)}>
               ↳ {displayTitle(project)}
             </span>
           )}
+          {tagsOf(t)
+            .slice(0, 3)
+            .map((x) => (
+              <span key={x} className="chip !text-[9.5px] !py-px" style={cvar(tagColor(x))}>
+                #{x}
+              </span>
+            ))}
           {t.date && (
             <span className={`mono text-[9.5px] tracking-[0.1em] ${late ? 'text-[#ff4d6d]' : 'text-white/45'}`}>
               {fmtDay(t.date)}
@@ -78,6 +86,7 @@ function Kanban() {
   const setView = useUI((s) => s.setView);
   const openEntity = useUI((s) => s.openEntity);
   const [filter, setFilter] = useState<string>('all');
+  const [tag, setTag] = useState<string | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [drop, setDrop] = useState<{ status: TaskStatus; before: string | null } | null>(null);
   const [celebrate, setCelebrate] = useState<string | null>(null);
@@ -86,8 +95,13 @@ function Kanban() {
   const dropRef = useRef<{ status: TaskStatus; before: string | null } | null>(null);
   const suppressClick = useRef(false);
 
-  const visible = tasks.filter((t) => (filter === 'all' ? true : filter === 'none' ? !t.projectId : t.projectId === filter));
+  const visible = tasks.filter((t) => (filter === 'all' ? true : filter === 'none' ? !t.projectId : t.projectId === filter) && (!tag || tagsOf(t).includes(tag)));
   const done = tasks.filter((t) => t.status === 'done').length;
+  const taskTags = (() => {
+    const m = new Map<string, number>();
+    for (const t of tasks) for (const x of tagsOf(t)) m.set(x, (m.get(x) ?? 0) + 1);
+    return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  })();
 
   const computeDrop = (x: number, y: number, dragId: string) => {
     const col = document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-col]');
@@ -186,6 +200,16 @@ function Kanban() {
             </button>
           </div>
         </div>
+        {taskTags.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 pointer-events-auto -mt-2 mb-3">
+            {taskTags.map(([x, n]) => (
+              <button key={x} className="chip" data-on={tag === x ? '1' : '0'} style={cvar(tagColor(x))} onClick={() => setTag(tag === x ? null : x)}>
+                #{x}
+                <span className="opacity-50">{n}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="flex-1 grid grid-cols-3 max-md:grid-cols-[85%_85%_85%] max-md:overflow-x-auto max-md:snap-x max-md:snap-mandatory gap-4 max-md:gap-2 min-h-0 pointer-events-auto">
           {COLUMNS.map((col) => {
@@ -217,6 +241,7 @@ function Kanban() {
                           createTask({
                             title: newTitle.trim(),
                             projectId: filter !== 'all' && filter !== 'none' ? filter : null,
+                            tags: tag ? [tag] : [],
                           });
                           setNewTitle('');
                         }

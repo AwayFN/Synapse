@@ -1,16 +1,25 @@
 // Synapse — desktop launcher (no dependencies, plain Node).
 //
-//   node scripts/synapse.mjs           start the app: rebuild if the sources changed, start the
-//                                      local server in the background, open the Synapse window
-//   node scripts/synapse.mjs --build   rebuild dist/ (and stamp it with the source hash)
-//   node scripts/synapse.mjs --stop    stop the background server
-//   node scripts/synapse.mjs --serve   the background server itself (started by the first form)
-//   --no-open                          do not open a window (tests)
+//   node scripts/synapse.mjs            start the app and open the Synapse window, in one of two modes:
+//                                         · serveur : this PC runs the Synapse server (the creator's PC, the
+//                                           « Synapse central »): rebuild if the sources changed, start it;
+//                                         · client  : any other PC: a small relay connects the window to the
+//                                           Synapse central (accounts and brains live there, synced live
+//                                           with the person's phone). Nothing to build.
+//                                       The mode is chosen once (a PC that already has Synapse data stays a
+//                                       server, a new installation becomes a client) and remembered.
+//   node scripts/synapse.mjs --serveur  force (and remember) the server mode on this PC
+//   node scripts/synapse.mjs --client   force (and remember) the client mode on this PC
+//   node scripts/synapse.mjs --build    rebuild dist/ (and stamp it with the source hash)
+//   node scripts/synapse.mjs --stop     stop the background server (or relay)
+//   node scripts/synapse.mjs --serve    the background server itself (started by the first form)
+//   node scripts/synapse.mjs --serve-relais  the background relay itself (client mode)
+//   --no-open                           do not open a window (tests)
 //
 // The server listens on this computer (127.0.0.1 and ::1); when the owner shares the brain it also
 // listens on the local network and/or behind a Cloudflare tunnel. Without sharing it stops by itself
 // a minute after the last Synapse window closed; with sharing it stays up for the guests.
-// The brain itself is kept in %APPDATA%\Synapse (cerveau.json, acces.json, sauvegardes\).
+// The brain itself is kept in %APPDATA%\Synapse (cerveaux\, comptes.json, sauvegardes\).
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -22,7 +31,7 @@ import { fileURLToPath } from 'node:url';
 
 const PORT = Number(process.env.SYNAPSE_PORT) || 5173;
 /** version of the server API (the launcher replaces an older running server) */
-const PROTO = 5;
+const PROTO = 6;
 const APP_URL = `http://localhost:${PORT}/`;
 const SELF = fileURLToPath(import.meta.url);
 const APP_DIR = path.resolve(path.dirname(SELF), '..');
@@ -251,15 +260,56 @@ function openWindow() {
   return 'default';
 }
 
+// ───────────────────────────── mode ─────────────────────────────
+
+/**
+ * Serveur ou client ? Choisi une fois, puis retenu (%APPDATA%\Synapse\appareil.json) :
+ *   - un PC qui a déjà des données Synapse (comptes, cerveaux) reste un serveur (le PC du créateur) ;
+ *   - une nouvelle installation se connecte au Synapse central (central.json), comme l'application Android :
+ *     on y crée son compte, et on retrouve tout sur ses autres appareils ;
+ *   - --serveur / --client imposent le mode (et le retiennent).
+ */
+async function deviceMode() {
+  const { dataDir } = await import('./server/util.mjs');
+  const { readCentral } = await import('./server/publish.mjs');
+  const root = dataDir();
+  const file = path.join(root, 'appareil.json');
+  let dev = {};
+  try {
+    dev = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {}
+  const forced = args.has('--serveur') ? 'serveur' : args.has('--client') ? 'client' : null;
+  let mode = forced || (dev.mode === 'serveur' || dev.mode === 'client' ? dev.mode : null);
+  if (!mode) {
+    let hasData = fs.existsSync(path.join(root, 'cerveau.json'));
+    try {
+      const c = JSON.parse(fs.readFileSync(path.join(root, 'comptes.json'), 'utf8'));
+      if (Object.keys(c.accounts || {}).length) hasData = true;
+    } catch {}
+    try {
+      if (fs.readdirSync(path.join(root, 'cerveaux')).length) hasData = true;
+    } catch {}
+    mode = hasData || !readCentral(APP_DIR) ? 'serveur' : 'client';
+  }
+  if (dev.mode !== mode) {
+    try {
+      fs.writeFileSync(file, JSON.stringify({ ...dev, mode }, null, 1));
+    } catch {}
+  }
+  return mode;
+}
+
 // ───────────────────────────── launch ─────────────────────────────
 
 async function launch() {
   say('');
   say('  SYNAPSE · démarrage…');
+  const mode = await deviceMode();
 
   let st = await probe();
-  if (st.state === 'ours' && (!samePath(st.info.root, DIST) || st.info.proto !== PROTO)) {
-    // a server from another copy of the folder (or an older version of Synapse) is still running: replace it
+  if (st.state === 'ours' && (!samePath(st.info.root, DIST) || st.info.proto !== PROTO || (st.info.mode || 'serveur') !== mode)) {
+    // a server from another copy of the folder (or an older version of Synapse, or the other mode) is still
+    // running: replace it
     await quit();
     await waitFor('free', 5000);
     st = await probe();
@@ -271,29 +321,48 @@ async function launch() {
     );
   }
 
-  ensureBuilt();
+  // client : rien à compiler, la fenêtre reçoit l'application du Synapse central
+  if (mode === 'serveur') ensureBuilt();
 
   if (st.state === 'free') {
-    const child = spawn(process.execPath, [SELF, '--serve'], {
+    const child = spawn(process.execPath, [SELF, mode === 'client' ? '--serve-relais' : '--serve'], {
       cwd: os.homedir(), // never lock the project folder
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
     });
     child.unref();
-    if (!(await waitFor('ours', 15_000))) fail(`Le serveur local n'a pas démarré.\nDétails : ${LOG}`);
+    if (!(await waitFor('ours', 15_000))) fail(`${mode === 'client' ? 'La connexion au Synapse central' : 'Le serveur local'} n'a pas démarré.\nDétails : ${LOG}`);
   }
 
   if (!args.has('--no-open')) openWindow();
-  say(st.state === 'free' ? '  ✓ Synapse est ouvert.' : '  ✓ Synapse tournait déjà : nouvelle fenêtre ouverte.');
+  if (mode === 'client') say(st.state === 'free' ? '  ✓ Synapse est ouvert (connecté au Synapse central).' : '  ✓ Synapse tournait déjà : nouvelle fenêtre ouverte.');
+  else say(st.state === 'free' ? '  ✓ Synapse est ouvert.' : '  ✓ Synapse tournait déjà : nouvelle fenêtre ouverte.');
 }
 
 // ───────────────────────────── server ─────────────────────────────
 
 /** The background server lives in ./server/ (app, shared brain, invitations, live sync) */
 async function serve() {
-  const { startServer } = await import("./server/server.mjs");
+  const { startServer } = await import('./server/server.mjs');
   startServer({ port: PORT, dist: DIST, idleMs: IDLE_MS, firstMs: FIRST_MS, log, stamp: readStamp });
+}
+
+/** Client mode: the relay to the Synapse central (./relais.mjs) */
+async function serveRelay() {
+  const { dataDir } = await import('./server/util.mjs');
+  const { startRelay } = await import('./relais.mjs');
+  startRelay({
+    port: PORT,
+    appDir: APP_DIR,
+    dataDir: dataDir(),
+    log,
+    idleMs: IDLE_MS,
+    firstMs: FIRST_MS,
+    proto: PROTO,
+    // « Utiliser Synapse seul sur ce PC » (quand le Synapse central ne répond pas) : ce PC devient serveur
+    spawnServer: () => spawn(process.execPath, [SELF, '--serve'], { cwd: os.homedir(), detached: true, stdio: 'ignore', windowsHide: true }).unref(),
+  });
 }
 
 // ───────────────────────────── main ─────────────────────────────
@@ -311,6 +380,8 @@ if (Number(process.versions.node.split('.')[0]) < 18) {
 
 if (args.has('--serve')) {
   serve();
+} else if (args.has('--serve-relais')) {
+  serveRelay();
 } else if (args.has('--build')) {
   if (!build('Compilation', true)) fail('La compilation a échoué.');
   say(`  ✓ dist/ à jour (${readStamp()}).`);

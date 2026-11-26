@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { displayTitle, useData } from '../store/data';
-import { neighborsOf, projectSlots, projectTasks } from '../store/graph';
+import { neighborsOf, projectNotes, projectSlots, projectTasks } from '../store/graph';
 import { useUI } from '../store/ui';
 import { NEON } from '../lib/color';
-import { normalizeTag } from '../lib/text';
+import { excerpt, normalizeTag } from '../lib/text';
 import { crossesMidnight, fmtDateShort, fmtDuration, fmtHM, fmtTime, slotDuration, todayISO } from '../lib/time';
-import type { Note, Project, Slot, Task, TaskStatus } from '../types';
-import { TASK_STATUS_LABEL } from '../types';
+import type { Entity, Project, Slot, Task, TaskStatus } from '../types';
+import { bodyOf, TASK_STATUS_LABEL } from '../types';
 import { cvar } from './common';
 import { EntityChip } from './EntityChip';
 import { LinkPicker } from './LinkPicker';
@@ -58,6 +58,35 @@ export function AutoTextarea({
   );
 }
 
+/**
+ * Le texte long d'un élément (description d'une tâche, d'un projet, d'un créneau ; contenu d'une note) : un aperçu
+ * qui ouvre l'éditeur en grand, comme pour les notes, au lieu d'une petite zone où l'on écrit à l'étroit.
+ * (Pas un vrai bouton : il reste utilisable en lecture seule, dans un formulaire désactivé.)
+ */
+export function BodyPreview({ e, placeholder, readOnly = false }: { e: Entity; placeholder: string; readOnly?: boolean }) {
+  const openEditor = useUI((s) => s.openEditor);
+  const text = bodyOf(e).trim();
+  const open = () => openEditor(e.id, { keepView: true });
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      data-body-preview
+      onClick={open}
+      onKeyDown={(ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          open();
+        }
+      }}
+      className="w-full text-left text-[13px] leading-relaxed text-white/65 border border-white/[0.08] p-3 cursor-pointer hover:border-[rgb(var(--c)/0.6)] focus:border-[rgb(var(--c)/0.6)] outline-none transition-colors"
+    >
+      {text ? <span className="whitespace-pre-line break-words">{excerpt(text, 320)}</span> : <span className="text-white/30">{readOnly ? 'Rien d’écrit pour l’instant.' : placeholder}</span>}
+      <div className="hud text-[9.5px] text-[rgb(var(--c))] mt-2">{readOnly ? 'Lire en grand →' : text ? 'Ouvrir en grand →' : 'Écrire en grand →'}</div>
+    </div>
+  );
+}
+
 export function ColorSwatches({ value, onChange }: { value: string; onChange: (c: string) => void }) {
   return (
     <div className="flex flex-wrap gap-[7px]">
@@ -82,7 +111,7 @@ export function ColorSwatches({ value, onChange }: { value: string; onChange: (c
 }
 
 /** Linked entities + "+ Lier à…" (en lecture seule : on peut ouvrir les liens, pas les changer) */
-export function LinksSection({ id, label = 'Liens', readOnly = false }: { id: string; label?: string; readOnly?: boolean }) {
+export function LinksSection({ id, label = 'Liens', readOnly = false, pickerLevel }: { id: string; label?: string; readOnly?: boolean; pickerLevel?: number }) {
   const entities = useData((s) => s.entities);
   const links = useData((s) => s.links);
   const unlink = useData((s) => s.unlink);
@@ -106,12 +135,12 @@ export function LinksSection({ id, label = 'Liens', readOnly = false }: { id: st
           <EntityChip
             key={n.entity.id}
             id={n.entity.id}
-            hint={n.kind === 'parent' ? (n.isParent ? 'projet' : n.entity.type === 'slot' ? 'créneau' : 'tâche') : undefined}
+            hint={n.kind === 'parent' ? (n.isParent ? 'projet' : n.entity.type === 'slot' ? 'créneau' : n.entity.type === 'note' ? 'note' : 'tâche') : undefined}
             onRemove={readOnly ? undefined : () => unlink(id, n.entity.id)}
           />
         ))}
       </div>
-      {picking && !readOnly && <LinkPicker sourceId={id} onClose={() => setPicking(false)} />}
+      {picking && !readOnly && <LinkPicker sourceId={id} onClose={() => setPicking(false)} level={pickerLevel} />}
     </Section>
   );
 }
@@ -179,7 +208,7 @@ export function ProjectFields({ p }: { p: Project }) {
         <DateField value={p.deadline} onChange={(v) => update(p.id, { deadline: v })} />
       </Section>
       <Section label="Description">
-        <AutoTextarea value={p.description} onChange={(v) => update(p.id, { description: v })} placeholder="De quoi s'agit-il ?" />
+        <BodyPreview e={p} placeholder="De quoi s’agit-il ? Objectifs, idées, contexte…" />
       </Section>
       <Section label={`Tâches · ${done}/${tasks.length}`}>
         <div className="h-px bg-white/10 mb-3 relative">
@@ -220,8 +249,52 @@ export function ProjectFields({ p }: { p: Project }) {
           }}
         />
       </Section>
+      <ProjectNotes p={p} />
       <ProjectSlots p={p} />
     </>
+  );
+}
+
+/** Les notes du projet (une note peut appartenir à un projet, ou rester indépendante) */
+function ProjectNotes({ p }: { p: Project }) {
+  const notes = useData(useShallow((s) => projectNotes(s.entities, p.id)));
+  const createNote = useData((s) => s.createNote);
+  const openEditor = useUI((s) => s.openEditor);
+  const [title, setTitle] = useState('');
+  return (
+    <Section label={`Notes · ${notes.length}`}>
+      <div className="flex flex-col">
+        {notes.slice(0, 12).map((n) => (
+          <div
+            key={n.id}
+            role="button"
+            tabIndex={0}
+            onClick={() => openEditor(n.id)}
+            onKeyDown={(e) => e.key === 'Enter' && openEditor(n.id)}
+            className="flex items-center gap-2.5 py-[5px] text-left group cursor-pointer outline-none"
+            style={cvar(n.color)}
+          >
+            <span className="dot" />
+            <span className="text-[13px] text-white/80 truncate flex-1 group-hover:text-white group-focus:text-white">{displayTitle(n)}</span>
+            <span className="mono text-[9.5px] text-white/35 flex-none">{fmtDateShort(new Date(n.updatedAt).toISOString().slice(0, 10))}</span>
+          </div>
+        ))}
+        {notes.length > 12 && <span className="xs-label mt-1">+ {notes.length - 12} autres (vue Notes)</span>}
+      </div>
+      <input
+        className="field mt-2 !text-[12.5px]"
+        placeholder="+ Nouvelle note du projet (Entrée)"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            const n = createNote({ title: title.trim(), projectId: p.id });
+            setTitle('');
+            openEditor(n.id, { keepView: true });
+          }
+        }}
+      />
+    </Section>
   );
 }
 
@@ -292,7 +365,7 @@ export function TaskFields({ t }: { t: Task }) {
         </div>
       </Section>
       <Section label="Description">
-        <AutoTextarea value={t.description} onChange={(v) => update(t.id, { description: v })} placeholder="Détails, contexte…" />
+        <BodyPreview e={t} placeholder="Détails, contexte, étapes…" />
       </Section>
     </>
   );
@@ -322,33 +395,34 @@ export function SlotFields({ s, compact }: { s: Slot; compact?: boolean }) {
       </Section>
       {!compact && (
         <Section label="Description">
-          <AutoTextarea value={s.description} onChange={(v) => update(s.id, { description: v })} placeholder="Notes sur ce créneau…" />
+          <BodyPreview e={s} placeholder="Ce que tu fais pendant ce créneau…" />
         </Section>
       )}
     </>
   );
 }
 
-export function TagEditor({ note }: { note: Note }) {
+/** Les tags d'un élément, quel qu'il soit (projet, tâche, note, créneau) */
+export function TagEditor({ id, tags }: { id: string; tags: string[] }) {
   const update = useData((s) => s.update);
   const all = useAllTags();
   const [text, setText] = useState('');
   const [focus, setFocus] = useState(false);
   const add = (raw: string) => {
     const t = normalizeTag(raw);
-    if (!t || note.tags.includes(t)) return;
-    update(note.id, { tags: [...note.tags, t] });
+    if (!t || tags.includes(t)) return;
+    update(id, { tags: [...tags, t] });
   };
   const suggestions = all
     .map(([t]) => t)
-    .filter((t) => !note.tags.includes(t) && (!text || t.startsWith(normalizeTag(text))))
+    .filter((t) => !tags.includes(t) && (!text || t.startsWith(normalizeTag(text))))
     .slice(0, 8);
   return (
     <div className="flex flex-wrap items-center gap-1.5 relative">
-      {note.tags.map((t) => (
+      {tags.map((t) => (
         <span key={t} className="chip" style={cvar(tagColor(t))}>
           #{t}
-          <button className="opacity-50 hover:opacity-100" onClick={() => update(note.id, { tags: note.tags.filter((x) => x !== t) })}>
+          <button className="opacity-50 hover:opacity-100" title={`Retirer #${t}`} onClick={() => update(id, { tags: tags.filter((x) => x !== t) })}>
             ×
           </button>
         </span>
@@ -363,11 +437,18 @@ export function TagEditor({ note }: { note: Note }) {
             e.preventDefault();
             add(text);
             setText('');
-          } else if (e.key === 'Backspace' && !text && note.tags.length) {
-            update(note.id, { tags: note.tags.slice(0, -1) });
+          } else if (e.key === 'Backspace' && !text && tags.length) {
+            update(id, { tags: tags.slice(0, -1) });
           }
         }}
-        placeholder={note.tags.length ? '+ tag' : '+ ajouter un tag (#idee, #urgent…)'}
+        onBlurCapture={() => {
+          // un tag tapé puis abandonné (clic ailleurs) n'est pas perdu
+          if (text.trim()) {
+            add(text);
+            setText('');
+          }
+        }}
+        placeholder={tags.length ? '+ tag' : '+ ajouter un tag (#idee, #urgent…)'}
         className="bg-transparent outline-none mono text-[11px] text-white/80 placeholder:text-white/25 min-w-[120px] py-1"
       />
       {focus && suggestions.length > 0 && (

@@ -29,7 +29,7 @@ export function PresenceBar() {
       )}
       {others.map((p) => {
         const on = following === p.id;
-        const where = p.focus && entities[p.focus] ? displayTitle(entities[p.focus]) : p.view === 'network' ? 'explore le réseau' : `vue ${p.view === 'flux' ? 'flux' : p.view === 'agenda' ? 'agenda' : 'tâches'}`;
+        const where = p.focus && entities[p.focus] ? displayTitle(entities[p.focus]) : p.view === 'network' ? 'explore le réseau' : `vue ${p.view === 'agenda' ? 'agenda' : p.view === 'notes' ? 'notes' : 'tâches'}`;
         return (
           <button
             key={p.id}

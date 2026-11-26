@@ -11,6 +11,7 @@ WORKDIR /app
 ENV NODE_ENV=production PORT=8080 SYNAPSE_DATA_DIR=/data
 COPY dist ./dist
 COPY scripts ./scripts
+COPY central.json ./central.json
 RUN test -f dist/index.html && mkdir -p /data && chown -R node:node /data
 USER node
 VOLUME ["/data"]

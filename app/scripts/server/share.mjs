@@ -26,6 +26,34 @@ export class Share {
     this.wantNet = false;
     this.retryTimer = null;
     this.retries = 0;
+    /**
+     * L'accès Wi-Fi est voulu. Si le PC change de réseau (Wi-Fi → câble, autre box…), son adresse locale change :
+     * l'accès se rebranche tout seul sur la nouvelle adresse, sans rien faire.
+     */
+    this.wantLan = false;
+    this.lanBusy = false;
+    this.lanWatch = setInterval(() => void this.checkLan(), 8_000);
+    this.lanWatch.unref?.();
+  }
+
+  /** Le réseau de ce PC a-t-il changé ? Alors l'accès Wi-Fi se rebranche sur la nouvelle adresse */
+  async checkLan() {
+    if (!this.wantLan || this.lanBusy || process.env.SYNAPSE_LAN_ADDRESSES) return;
+    const now = lanAddresses();
+    const cur = this.lan.tried || this.lan.addresses || [];
+    if (now.length === cur.length && now.every((a) => cur.includes(a))) return;
+    this.lanBusy = true;
+    try {
+      this.log(`réseau local changé : ${cur.join(',') || '—'} → ${now.join(',') || '—'}`);
+      this.closeLan();
+      if (now.length) await this.startLan();
+      else {
+        this.lan.error = 'Plus de réseau local pour l’instant : l’accès Wi-Fi reviendra tout seul.';
+        this.onChange();
+      }
+    } finally {
+      this.lanBusy = false;
+    }
   }
 
   /** Relance l'accès Internet après une coupure (10 s, 30 s, 1 min… puis toutes les 5 min) */
@@ -80,6 +108,7 @@ export class Share {
 
   // ── réseau local
   async startLan() {
+    this.wantLan = true;
     if (this.lan.on) return this.status();
     const addrs = (process.env.SYNAPSE_LAN_ADDRESSES || '').split(',').filter(Boolean);
     const list = addrs.length ? addrs : lanAddresses();
@@ -111,6 +140,8 @@ export class Share {
       on: ok.length > 0,
       servers,
       addresses: ok,
+      /** les adresses essayées (pour remarquer un changement de réseau, même si l'une n'a pas pu s'ouvrir) */
+      tried: list,
       urls: ok.map((a) => `http://${a}:${this.port}`),
       error: ok.length ? null : "Impossible d'ouvrir l'accès réseau local",
     };
@@ -119,16 +150,22 @@ export class Share {
     return this.status();
   }
 
+  /** Fermeture voulue de l'accès Wi-Fi */
   stopLan() {
-    for (const s of this.lan.servers) {
+    this.wantLan = false;
+    this.closeLan();
+    this.onChange();
+    return this.status();
+  }
+
+  closeLan() {
+    for (const s of this.lan.servers || []) {
       try {
         s.close();
         s.closeAllConnections?.();
       } catch {}
     }
     this.lan = { on: false, servers: [], urls: [], addresses: [], error: null };
-    this.onChange();
-    return this.status();
   }
 
   // ── Internet (tunnel Cloudflare, sans compte, adresse temporaire)

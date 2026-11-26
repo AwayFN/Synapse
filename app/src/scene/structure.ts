@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { EntityType } from '../types';
+import { hasProject, type EntityType } from '../types';
 import { useData, type DataState } from '../store/data';
 import { computeEdges, type Edge } from '../store/graph';
 
@@ -19,7 +19,8 @@ export interface Structure {
 function structureKey(s: DataState): string {
   const ents = Object.values(s.entities).sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
   let k = '';
-  for (const e of ents) k += `${e.id}:${e.type[0]}${e.color}${e.type === 'task' ? (e.projectId ?? '') : ''};`;
+  // le projet d'une tâche, d'un créneau ou d'une note dessine un lien : il fait partie de la structure
+  for (const e of ents) k += `${e.id}:${e.type[0]}${e.color}${hasProject(e) ? (e.projectId ?? '') : ''};`;
   k += '#';
   for (const l of s.links) k += `${l.a}${l.b};`;
   return k;

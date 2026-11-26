@@ -5,12 +5,15 @@ import '@fontsource-variable/jetbrains-mono';
 import './index.css';
 import { App } from './App';
 import { bootstrap } from './sync/boot';
-import { AuthScreen, BootScreen, FirstRunScreen, JoinScreen, MaintenanceScreen, OfflineScreen, ResetScreen, SetupScreen, SuspendedScreen } from './ui/Gate';
+import { AuthScreen, BootScreen, ClaimScreen, FirstRunScreen, JoinScreen, MaintenanceScreen, OfflineScreen, ResetScreen, SetupScreen, SuspendedScreen, UnreachableScreen } from './ui/Gate';
 import { AppGuard } from './ui/Crash';
+import { installBack } from './lib/back';
 
 const root = createRoot(document.getElementById('root')!);
 const show = (node: ReactNode) => root.render(<AppGuard>{node}</AppGuard>);
 show(<BootScreen />);
+// Échap (et le bouton retour du téléphone) ferment ce qui est ouvert, sur tous les écrans
+installBack();
 
 // Servi par le serveur Synapse (scripts/synapse.mjs sur le PC, scripts/serveur-public.mjs en ligne) :
 // le serveur garde les cerveaux, les comptes et les partages.
@@ -19,6 +22,8 @@ bootstrap().then((b) => {
   switch (b.kind) {
     case 'first':
       return show(<FirstRunScreen hello={b.hello} />);
+    case 'claim':
+      return show(<ClaimScreen hello={b.hello} />);
     case 'join':
       return show(<JoinScreen token={b.token} info={b.info} hello={b.hello} />);
     case 'auth':
@@ -33,6 +38,8 @@ bootstrap().then((b) => {
       return show(<SuspendedScreen />);
     case 'offline':
       return show(<OfflineScreen ownerName={b.ownerName} />);
+    case 'unreachable':
+      return show(<UnreachableScreen reason={b.reason} />);
     default:
       return show(<App />);
   }

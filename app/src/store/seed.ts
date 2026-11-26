@@ -11,10 +11,10 @@ export function buildSeed(): { entities: Record<string, Entity>; links: Link[] }
   let n = 0;
   const stamp = () => t0 + n++ * 1000 * 60 * 37;
 
-  const project = (title: string, color: string, description: string, deadline: string | null): Project => {
+  const project = (title: string, color: string, description: string, deadline: string | null, tags: string[] = []): Project => {
     const at = stamp();
     const p: Project = {
-      id: uid(), type: 'project', title, color, description, status: 'active', deadline,
+      id: uid(), type: 'project', title, color, description, status: 'active', deadline, tags,
       createdAt: at, updatedAt: at, seed: true,
     };
     entities[p.id] = p;
@@ -23,19 +23,19 @@ export function buildSeed(): { entities: Record<string, Entity>; links: Link[] }
   let order = 0;
   const task = (
     title: string, color: string, projectId: string | null, status: Task['status'],
-    date: string | null = null, time: number | null = null,
+    date: string | null = null, time: number | null = null, tags: string[] = [],
   ): Task => {
     const at = stamp();
     const t: Task = {
-      id: uid(), type: 'task', title, color, description: '', projectId, status, date, time,
+      id: uid(), type: 'task', title, color, description: '', projectId, status, date, time, tags,
       order: ++order, doneAt: status === 'done' ? at : null, createdAt: at, updatedAt: at, seed: true,
     };
     entities[t.id] = t;
     return t;
   };
-  const note = (title: string, color: string, tags: string[], content: string): Note => {
+  const note = (title: string, color: string, tags: string[], content: string, projectId: string | null = null): Note => {
     const at = stamp();
-    const x: Note = { id: uid(), type: 'note', title, color, tags, content, createdAt: at, updatedAt: at, seed: true };
+    const x: Note = { id: uid(), type: 'note', title, color, tags, content, projectId, createdAt: at, updatedAt: at, seed: true };
     entities[x.id] = x;
     return x;
   };
@@ -46,7 +46,7 @@ export function buildSeed(): { entities: Record<string, Entity>; links: Link[] }
       return h * 60 + m;
     };
     const x: Slot = {
-      id: uid(), type: 'slot', title, color, description: '', projectId, date, start: toMin(start), end: toMin(end),
+      id: uid(), type: 'slot', title, color, description: '', projectId, date, start: toMin(start), end: toMin(end), tags: [],
       createdAt: at, updatedAt: at, seed: true,
     };
     entities[x.id] = x;
@@ -54,7 +54,7 @@ export function buildSeed(): { entities: Record<string, Entity>; links: Link[] }
   };
   const link = (a: Entity, b: Entity) => links.push({ id: uid(), a: a.id, b: b.id, createdAt: stamp() });
 
-  const app = project('Projet App', '#ff2e88', "Application mobile de suivi d'habitudes. Objectif : MVP testable avant fin décembre.", addDays(today, 40));
+  const app = project('Projet App', '#ff2e88', "Application mobile de suivi d'habitudes. Objectif : MVP testable avant fin décembre.", addDays(today, 40), ['projet']);
   const folio = project('Site Portfolio', '#00e5ff', 'Refonte complète du portfolio : direction artistique néon, études de cas, mise en ligne.', addDays(today, 14));
   const japon = project('Voyage Japon', '#39ff88', "Préparer le voyage d'avril : itinéraire, budget, réservations.", null);
 
@@ -68,8 +68,8 @@ export function buildSeed(): { entities: Record<string, Entity>; links: Link[] }
   task('Mettre en ligne', '#3d7bff', folio.id, 'todo', addDays(today, 13));
   const vols = task('Réserver les vols', '#7cf03c', japon.id, 'todo', addDays(today, 3));
   task('Itinéraire Kyoto', '#2dd4bf', japon.id, 'todo');
-  task('Rappeler le garagiste', '#fb923c', null, 'todo', today, 17 * 60 + 30);
-  task('Faire les courses', '#facc15', null, 'todo');
+  task('Rappeler le garagiste', '#fb923c', null, 'todo', today, 17 * 60 + 30, ['personnel']);
+  task('Faire les courses', '#facc15', null, 'todo', null, null, ['personnel']);
 
   const startup = note('Idée startup', '#a855f7', ['idee', 'business'],
     "Un assistant qui transforme les notes vocales en tâches planifiées.\n\nCible : indépendants débordés.\nModèle : abonnement mensuel, essai gratuit 14 jours.\n\nQuestions ouvertes :\n- comment gérer la confidentialité ?\n- intégration agenda dès la v1 ?");
@@ -79,8 +79,9 @@ export function buildSeed(): { entities: Record<string, Entity>; links: Link[] }
     'Fonds noirs purs, accents néon saturés, typo mono pour les labels.\nGlow léger, jamais criard. Liserés fins sur les panneaux.');
   const livres = note('Livres à lire', '#60a5fa', ['personnel', 'liste'],
     '- Le Problème à trois corps\n- Deep Work — Cal Newport\n- Shape Up — Basecamp');
+  // une note qui appartient à un projet (les autres sont des notes indépendantes)
   const sprint = note('Plan sprint 12', '#ff4d6d', ['projet', 'urgent'],
-    "Priorité : onboarding complet + premiers retours.\nBloquant : choix du fournisseur d'auth.");
+    "Priorité : onboarding complet + premiers retours.\nBloquant : choix du fournisseur d'auth.", app.id);
 
   const s1 = slot('Deep work — onboarding', '#ff2e88', today, '09:12', '11:47', app.id);
   slot('Déjeuner', '#facc15', today, '12:01', '13:08');
@@ -93,7 +94,6 @@ export function buildSeed(): { entities: Record<string, Entity>; links: Link[] }
   link(startup, app);
   link(refs, folio);
   link(refs, app);
-  link(sprint, app);
   link(sprint, onboarding);
   link(livres, journal);
   link(journal, japon);

@@ -72,6 +72,29 @@ function nextOrder(entities: Record<string, Entity>, status: TaskStatus): number
 
 const TYPE_OFFSET: Record<EntityType, number> = { project: 0, task: 1, note: 2, slot: 4 };
 
+/**
+ * Un élément avec tous ses champs V6 : des tags (sur tout), et un projet pour les notes (null : indépendante).
+ * Les éléments d'avant (navigateur, export, ancien serveur) n'en avaient pas forcément.
+ */
+export function withDefaults(e: Entity): Entity {
+  let x = e;
+  if (!Array.isArray(x.tags)) x = { ...x, tags: [] } as Entity;
+  if (x.type === 'note' && x.projectId === undefined) x = { ...x, projectId: null };
+  return x;
+}
+
+export function normalizeEntities(entities: Record<string, Entity>): Record<string, Entity> {
+  let out: Record<string, Entity> | null = null;
+  for (const [id, e] of Object.entries(entities)) {
+    const x = withDefaults(e);
+    if (x !== e) {
+      out ??= { ...entities };
+      out[id] = x;
+    }
+  }
+  return out ?? entities;
+}
+
 export function displayTitle(e: Entity | undefined | null): string {
   if (!e) return '—';
   const t = e.title.trim();
@@ -141,6 +164,7 @@ export const useData = create<DataState>()(
               description: '',
               status: 'active',
               deadline: null,
+              tags: [],
               ...input,
             } as Project,
             opts,
@@ -160,6 +184,7 @@ export const useData = create<DataState>()(
               time: null,
               order: nextOrder(get().entities, status),
               doneAt: status === 'done' ? now() : null,
+              tags: [],
               ...input,
             } as Task,
             opts,
@@ -174,6 +199,7 @@ export const useData = create<DataState>()(
               title: '',
               content: '',
               tags: [],
+              projectId: null,
               ...input,
             } as Note,
             opts,
@@ -191,6 +217,7 @@ export const useData = create<DataState>()(
               date: todayISO(),
               start,
               end: (start + 60) % 1440,
+              tags: [],
               ...input,
             } as Slot,
             opts,
@@ -377,16 +404,21 @@ export const useData = create<DataState>()(
 
         replaceAll: (data) => {
           if (blocked()) return;
-          set({ entities: data.entities, links: data.links });
+          set({ entities: normalizeEntities(data.entities), links: data.links });
           log(`↓ IMPORT  ${Object.keys(data.entities).length} ENTITÉS`, '#00e5ff');
         },
       };
     },
     {
       name: 'synapse-data',
-      version: 1,
+      // 2 : des tags sur tout, et un projet (ou rien) pour les notes
+      version: 2,
       storage: createJSONStorage(() => debouncedStorage),
       partialize: (s) => ({ entities: s.entities, links: s.links, activity: s.activity }),
+      migrate: (persisted) => {
+        const p = (persisted ?? {}) as Partial<DataState>;
+        return { ...p, entities: normalizeEntities(p.entities ?? {}) } as DataState;
+      },
     },
   ),
 );

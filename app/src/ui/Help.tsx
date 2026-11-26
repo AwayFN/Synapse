@@ -7,7 +7,7 @@ const NAV: [string, string][] = [
   ['Clic gauche glissé', 'dériver dans l’espace'],
   ['Z Q S D / W A S D', 'voler · E / Espace monter · A / Q descendre'],
   ['Souris', 'flottement & parallaxe'],
-  ['Clic sur un noyau', 'zoom + panneau de détail (note → éditeur plein écran)'],
+  ['Clic sur un noyau', 'zoom + fiche (une note s’ouvre en grand)'],
   ['Double-clic dans le vide · H', 'vue d’ensemble'],
   ['F', 'recentrer sur la sélection'],
 ];
@@ -16,11 +16,13 @@ const KEYS: [string, string][] = [
   ['Ctrl N · Alt N', 'nouvelle note, en plein écran'],
   ['Tab', 'emploi du temps (la semaine)'],
   ['⇧ Tab', 'vue tâches (kanban)'],
-  ['Échap', 'fermer / revenir au réseau'],
+  ['Échap', 'fermer ce qui est ouvert, partout (retour sur le téléphone)'],
   ['?', 'cette aide'],
 ];
 const SYNTAX: [string, string][] = [
-  ['note Idée startup #idee', 'note taguée'],
+  ['note Idée startup #idee', 'note taguée (des tags sur tout : projets, tâches…)'],
+  ['note Compte rendu @Projet_App', 'note du projet (sans @ : note indépendante)'],
+  ['#urgent', 'chercher tout ce qui porte ce tag'],
   ['tâche Appeler Léa @Projet_App demain 14h', 'tâche dans un projet, datée'],
   ['projet Site vitrine deadline 30/12', 'projet avec deadline'],
   ['créneau 12h01-17h38 Deep work @App', 'créneau lié, horaires libres'],
@@ -90,10 +92,16 @@ export function Help() {
               déplacer, son bas pour changer sa durée, clique dessus pour choisir son <span className="text-white/80">projet</span> et le relier au reste. Chaque créneau
               affiche son projet (ou « Sans projet ») et sa durée ; la fiche d’un projet montre le temps qui lui est consacré.
             </div>
+            <div className="xs-label mt-5 mb-2">Écrire en grand · vue Notes</div>
+            <div className="text-[12px] text-white/55 leading-relaxed">
+              Une note, et la description d’une tâche, d’un projet ou d’un créneau, s’écrivent en grand, comme dans le Bloc-notes (<span className="text-white/80">A− / A+</span> en
+              bas pour la taille du texte). La vue <span className="text-white/80">Notes</span> les montre toutes : par projet, indépendantes, par tag.
+            </div>
             <div className="xs-label mt-5 mb-2">Tout se relie</div>
             <div className="text-[12px] text-white/55 leading-relaxed">
-              Notes, tâches, projets et créneaux : dans chaque fiche (et en haut d’une note), <span className="text-white/80">+ Lier à…</span> relie à n’importe quoi. Une
-              tâche ou un créneau peut appartenir à un projet.
+              Notes, tâches, projets et créneaux : dans chaque fiche (et en haut de l’éditeur), <span className="text-white/80">+ Lier à…</span> relie à n’importe quoi. Une
+              tâche, une note ou un créneau peut appartenir à un projet, ou rester <span className="text-white/80">indépendant</span>. Des{" "}
+              <span className="text-white/80">tags</span> sur tout : un clic sur un tag (en haut du réseau) allume ce qui le porte.
             </div>
           </div>
           <div>
@@ -105,15 +113,17 @@ export function Help() {
             </div>
             <div className="xs-label mt-5 mb-2">Ton compte · les admins</div>
             <div className="text-[12px] text-white/55 leading-relaxed">
-              Ton prénom en haut à droite : ton compte, tes cerveaux, rejoindre le cerveau d’un ami, ton téléphone (QR code). L’espace admin n’apparaît qu’au créateur et
-              aux admins qu’il nomme ; ils ont tous les mêmes droits.
+              Ton prénom en haut à droite : ton compte, tes cerveaux, rejoindre le cerveau d’un ami, l’application Android (QR code), se déconnecter. Avec ton compte, tu
+              retrouves tout sur ton PC et ton téléphone : ce que tu fais sur l’un apparaît aussitôt sur l’autre. L’espace admin n’apparaît qu’au créateur et aux admins
+              qu’il nomme ; ils ont tous les mêmes droits.
             </div>
           </div>
         </div>
 
         <div className="mt-6 pt-4 border-t border-white/[0.07] text-[11.5px] text-white/40 leading-relaxed">
-          Tout est enregistré automatiquement (sur l’ordinateur qui fait tourner Synapse, avec une sauvegarde par jour). Pense à « Exporter mes données » via Ctrl K de
-          temps en temps.
+          Tout est enregistré automatiquement sur le serveur Synapse (avec une sauvegarde par jour), et synchronisé en direct sur tous tes appareils. Pendant une
+          coupure (changement de réseau, tunnel), tes modifications sont gardées et partent dès le retour de la connexion. Pense à « Exporter mes données » via Ctrl K
+          de temps en temps.
         </div>
       </div>
     </div>

@@ -1,22 +1,18 @@
-import { useData } from '../store/data';
+import { normalizeEntities, useData } from '../store/data';
 import { useUI } from '../store/ui';
 import { flushStorage } from '../store/storage';
+import { saveTextFile, isAndroidApp } from '../sync/native';
 import type { Entity, Link } from '../types';
 import { todayISO } from './time';
 
 export function exportData() {
   const { entities, links } = useData.getState();
-  const payload = { app: 'synapse', version: 1, exportedAt: new Date().toISOString(), entities, links };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `synapse-${todayISO()}.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
-  useUI.getState().toast({ text: `EXPORT · ${Object.keys(entities).length} ENTITÉS`, color: '#00e5ff' });
+  const payload = { app: 'synapse', version: 2, exportedAt: new Date().toISOString(), entities, links };
+  const ok = saveTextFile(`synapse-${todayISO()}.json`, JSON.stringify(payload, null, 2));
+  useUI.getState().toast({
+    text: ok ? `EXPORT · ${Object.keys(entities).length} ENTITÉS${isAndroidApp() ? ' · DANS TÉLÉCHARGEMENTS' : ''}` : 'EXPORT IMPOSSIBLE',
+    color: ok ? '#00e5ff' : '#ff4d6d',
+  });
 }
 
 function isEntity(x: unknown): x is Entity {
@@ -40,7 +36,7 @@ export function importData() {
         : [];
       if (!Object.keys(ents).length) throw new Error('vide');
       if (!window.confirm(`Remplacer toutes les données actuelles par ${Object.keys(ents).length} entités importées ?`)) return;
-      useData.getState().replaceAll({ entities: ents, links });
+      useData.getState().replaceAll({ entities: normalizeEntities(ents), links });
       flushStorage();
       useUI.getState().toast({ text: `IMPORT RÉUSSI · ${Object.keys(ents).length} ENTITÉS`, color: '#39ff88' });
     } catch {

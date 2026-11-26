@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Tout en noir, comme Synapse : pas d'éclair blanc au démarrage -->
+    <style name="Theme.Synapse" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/noir</item>
+        <item name="android:colorBackground">@color/noir</item>
+        <item name="android:statusBarColor">@color/noir</item>
+        <item name="android:navigationBarColor">@color/noir</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorAccent">#FF00E5FF</item>
+    </style>
+</resources>

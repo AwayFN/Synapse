@@ -1,16 +1,25 @@
-﻿SYNAPSE · rendre Synapse public
-===============================
+﻿SYNAPSE · le Synapse central, en ligne pour tout le monde
+=========================================================
 
-Trois façons, de la plus simple à la plus solide. Dans tous les cas, c'est
-le même Synapse : comptes, cerveaux, invitations, espace admin.
+Toutes les applications Synapse (téléphones Android, PC Windows de tes amis)
+se connectent à UN serveur : le Synapse central. Trois façons de le faire
+tourner, de la plus simple à la plus solide. Dans tous les cas, c'est le
+même Synapse : comptes, cerveaux, invitations, espace admin.
 
-1. Depuis ton PC, adresse gratuite (pour commencer, entre amis)
---------------------------------------------------------------
-- Espace admin > Serveur > « Depuis n'importe où » > Ouvert.
-- Rien à acheter, rien à régler. Mais : ton PC doit rester allumé, et
-  l'adresse (…trycloudflare.com) change à chaque redémarrage de Synapse.
+1. Depuis ton PC, adresse gratuite (c'est le réglage par défaut)
+---------------------------------------------------------------
+- Espace admin > Serveur > « Depuis n'importe où » > Ouvert (ou bouton
+  Partager). Rien à acheter, rien à régler.
+- L'adresse (…trycloudflare.com) change à chaque redémarrage de Synapse :
+  ton PC la publie tout seul sur GitHub (ton dépôt, branche
+  « synapse-adresse », fichier « adresse.json »), avec la connexion GitHub
+  déjà enregistrée sur ce PC (celle qui sert à publier Synapse). Les
+  applications la retrouvent toutes seules, sans se déconnecter.
+  État : Espace admin > Serveur > « Adresse pour les applications ».
+- Ton PC doit rester allumé : s'il est éteint, les applications affichent
+  « Le Synapse central ne répond pas » et réessaient toutes seules.
 - Cloudflare réserve ces adresses gratuites aux essais (pas pour un vrai
-  site public).
+  service public).
 
 2. Depuis ton PC, adresse fixe (ex. https://synapse.ton-domaine.fr)
 ------------------------------------------------------------------
@@ -25,7 +34,11 @@ Il te faut : un compte Cloudflare (gratuit) et un nom de domaine
    service HTTP, adresse localhost:5173.
 4. Dans Synapse : Espace admin > Serveur > Adresse fixe : colle
    l'adresse (https://synapse.ton-domaine.fr) et le jeton, Enregistrer.
-   Puis ferme et rouvre l'accès Internet.
+   Puis ferme et rouvre l'accès Internet. L'adresse fixe est publiée
+   pour les applications, comme l'adresse gratuite.
+5. (Conseillé) Écris aussi cette adresse dans app\central.json
+   (« adresse ») et publie Synapse : les nouvelles applications la
+   connaîtront même sans passer par GitHub.
 Ton PC doit toujours rester allumé, mais l'adresse ne change plus.
 
 3. Chez un hébergeur (toujours en ligne, sans ton PC)
@@ -33,9 +46,9 @@ Ton PC doit toujours rester allumé, mais l'adresse ne change plus.
 Le plus simple : un petit serveur (VPS) Linux avec Docker (environ 4 à
 6 € par mois chez Hetzner, OVH, Scaleway…), ou une plateforme qui lance
 une image Docker avec un disque persistant (Railway, Fly.io, Render…).
-L'application est déjà compilée (dossier app\dist, mis à jour à chaque
-lancement de Synapse sur ton PC) : l'hébergeur n'a rien à installer ni à
-compiler, il lui faut seulement Node.js (le Dockerfile s'en charge).
+L'application est déjà compilée (dossier app\dist) : l'hébergeur n'a rien
+à installer ni à compiler, il lui faut seulement Node.js (le Dockerfile
+s'en charge).
 1. Copie le dossier « app » sur le serveur, puis dans ce dossier :
      docker build -t synapse .
      docker run -d --name synapse --restart unless-stopped -p 8080:8080 \
@@ -48,40 +61,45 @@ compiler, il lui faut seulement Node.js (le Dockerfile s'en charge).
 3. Regarde le journal : docker logs synapse
    Une ligne « INSTALLATION » donne un lien : ouvre-le pour créer ton
    compte créateur (e-mail + mot de passe). Ce lien ne sert qu'une fois.
-4. Les données sont dans le volume /data (un dossier par cerveau, les
+4. Indique l'adresse aux applications : écris-la dans app\central.json
+   (« adresse ») et publie Synapse (git push). Les applications l'utilisent
+   dès qu'elles ne trouvent plus l'ancienne.
+5. Les données sont dans le volume /data (un dossier par cerveau, les
    comptes, les réglages, une sauvegarde par jour) : sauvegarde-le
-   régulièrement (copie du volume, ou sauvegarde automatique de
-   l'hébergeur).
+   régulièrement.
 Sans Docker : Node.js 22 ou plus, puis dans « app » (rien à installer) :
      PORT=8080 SYNAPSE_DATA_DIR=/chemin/donnees SYNAPSE_URL_PUBLIQUE=https://… node scripts/serveur-public.mjs
 
 Emmener tes cerveaux existants chez l'hébergeur
 -----------------------------------------------
-1. Sur ton PC, AVANT tout : ton prénom > Profil > ajoute ton e-mail et un
-   mot de passe (chez l'hébergeur, personne n'est « le PC du créateur »).
-2. Ferme Synapse, puis copie tout le contenu de %APPDATA%\Synapse (sauf
-   le dossier « outils ») dans le volume /data de l'hébergeur, avant le
-   premier démarrage. Tes comptes, cerveaux et réglages suivent ; tu te
-   connectes avec ton e-mail et ton mot de passe.
+1. Ferme Synapse sur ton PC, puis copie tout le contenu de
+   %APPDATA%\Synapse (sauf le dossier « outils ») dans le volume /data de
+   l'hébergeur, avant le premier démarrage. Tes comptes, cerveaux et
+   réglages suivent ; tout le monde se connecte avec son e-mail et son mot
+   de passe, comme avant.
+2. Sur ton PC, coupe ensuite la publication de l'adresse (Espace admin >
+   Serveur) : c'est l'hébergeur, maintenant, le Synapse central.
 
 Avant d'ouvrir à tout le monde : la liste
 -----------------------------------------
 [ ] Ton compte créateur a un e-mail et un mot de passe solide.
-[ ] Inscriptions « sur invitation » au début, « ouvertes » ensuite
+[ ] Inscriptions : « ouvertes » (par défaut : quiconque installe
+    l'application crée son compte), « sur invitation » ou « fermées »
     (Espace admin > Inscriptions). Limite de comptes si tu veux.
 [ ] Relis le texte « Conditions & confidentialité » (Espace admin >
     Réglages) : en France et en Europe (RGPD), tu es responsable des
     données de tes utilisateurs. Indique comment te contacter, ce que tu
-    gardes (nom, e-mail, dates), pourquoi, et combien de temps. Chacun
-    peut déjà exporter ses données et supprimer son compte lui-même.
+    gardes (nom, e-mail, dates, appareils), pourquoi, et combien de temps.
+    Chacun peut déjà exporter ses données et supprimer son compte.
 [ ] Les sauvegardes sont copiées ailleurs de temps en temps.
 [ ] Tu sais publier une annonce et passer en maintenance (Réglages).
 [ ] Tu as nommé un admin pour t'aider si besoin (Personnes > rôle).
 
 Ce que l'espace admin montre, et ne montre pas
--------------------------------------------------
+----------------------------------------------
 Il montre des chiffres et des métadonnées : comptes, dates d'inscription
-et de connexion, appareil, nombre de neurones et de liens, vues utilisées,
-familles de ce qui est capturé, retours, erreurs techniques, journal.
-Il ne montre jamais le contenu des cerveaux : c'est ce qui permet à tes
-utilisateurs de te faire confiance.
+et de connexion, appareils (application Android, application Windows,
+navigateur) et qui est en ligne, nombre de neurones et de liens, vues
+utilisées, familles de ce qui est capturé, retours, erreurs techniques,
+journal. Il ne montre jamais le contenu des cerveaux : c'est ce qui
+permet à tes utilisateurs de te faire confiance.

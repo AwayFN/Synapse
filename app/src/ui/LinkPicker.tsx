@@ -3,18 +3,21 @@ import { displayTitle, useData } from '../store/data';
 import { neighborsOf } from '../store/graph';
 import { useUI } from '../store/ui';
 import { matchScore } from '../lib/text';
-import { TYPE_LABEL, type Entity } from '../types';
+import { bodyOf, tagsOf, TYPE_LABEL, type Entity } from '../types';
+import { LEVEL, useBackLayer } from '../lib/back';
 import { cvar } from './common';
 import { TYPE_TAG } from './Labels';
 
 const TYPE_RANK = { project: 0, task: 1, note: 2, slot: 3 } as const;
 
 function searchText(e: Entity) {
-  return `${e.title} ${e.type === 'note' ? e.content.slice(0, 200) + ' ' + e.tags.join(' ') : ''}`;
+  return `${e.title} ${bodyOf(e).slice(0, 200)} ${tagsOf(e).join(' ')}`;
 }
 
 /** "+ Lier à…" — search across every entity, Enter to link; can also create & link */
-export function LinkPicker({ sourceId, onClose }: { sourceId: string; onClose: () => void }) {
+export function LinkPicker({ sourceId, onClose, level = LEVEL.inPanel }: { sourceId: string; onClose: () => void; level?: number }) {
+  // Échap (ou retour sur le téléphone) ferme d'abord cette liste, pas ce qui la contient
+  useBackLayer(true, onClose, level);
   const [q, setQ] = useState('');
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);

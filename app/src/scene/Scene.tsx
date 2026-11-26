@@ -86,7 +86,12 @@ export function Scene() {
       />
       <World />
       <EffectComposer multisampling={0}>
-        <Bloom mipmapBlur intensity={1.15} luminanceThreshold={0.16} luminanceSmoothing={0.4} radius={0.72} />
+        {/*
+          L'éclat néon des neurones, sans « aura » : seuls les points vraiment lumineux (noyaux, étincelles) brillent,
+          et la lueur reste serrée autour d'eux. Avant (seuil 0,16, rayon 0,72), tout le réseau s'auréolait d'un
+          brouillard dès qu'on s'éloignait un peu.
+        */}
+        <Bloom mipmapBlur intensity={1.05} luminanceThreshold={0.3} luminanceSmoothing={0.22} radius={0.42} />
         <Vignette offset={0.2} darkness={0.85} />
       </EffectComposer>
     </Canvas>

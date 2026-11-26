@@ -47,6 +47,10 @@ export interface ServerInfo {
   setup: boolean;
   /** nouvelle installation : la personne devant ce PC crée son compte */
   firstRun?: boolean;
+  /** l'ancien compte de ce PC n'a pas encore de mot de passe : il en choisit un */
+  claim?: boolean;
+  /** le dépôt GitHub de Synapse (ex. « AwayFN/Synapse ») : l'application Android s'y télécharge */
+  depot?: string | null;
   creatorName: string;
   maintenance: string | null;
   announcement: Announcement | null;

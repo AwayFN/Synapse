@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { EntityType, ViewMode } from '../types';
+import { tagsOf, type EntityType, type ViewMode } from '../types';
 import { uid } from '../lib/random';
 import { useData } from './data';
 
@@ -14,7 +14,7 @@ export interface UIState {
   view: ViewMode;
   /** entity shown in the side panel */
   selectedId: string | null;
-  /** note open in the full-screen editor */
+  /** élément ouvert dans l'éditeur en grand (une note, ou la description d'une tâche, d'un projet, d'un créneau) */
   editorId: string | null;
   /** constellation the camera orbits / follows */
   focusId: string | null;
@@ -34,7 +34,8 @@ export interface UIState {
   closePanel: () => void;
   setFocus: (id: string | null) => void;
   setHovered: (id: string | null) => void;
-  openEditor: (id: string) => void;
+  /** l'éditeur en grand ; keepView : reste dans la vue ouverte (notes, tâches, emploi du temps) au lieu du réseau */
+  openEditor: (id: string, opts?: { keepView?: boolean }) => void;
   closeEditor: () => void;
   openPalette: (seed?: string) => void;
   closePalette: () => void;
@@ -79,7 +80,13 @@ export const useUI = create<UIState>()((set, get) => ({
   setHovered: (id) => {
     if (get().hoveredId !== id) set({ hoveredId: id });
   },
-  openEditor: (id) => set({ editorId: id, selectedId: null, focusId: id, view: 'network' }),
+  openEditor: (id, opts) => {
+    const e = useData.getState().entities[id];
+    if (!e) return;
+    if (e.type === 'note') set({ editorId: id, selectedId: null, focusId: id, ...(opts?.keepView ? {} : { view: 'network' as ViewMode }) });
+    // une tâche, un projet, un créneau : en fermant l'éditeur, on retrouve sa fiche (ou la vue d'où l'on vient)
+    else set({ editorId: id });
+  },
   closeEditor: () => {
     const id = get().editorId;
     set({ editorId: null });
@@ -88,9 +95,9 @@ export const useUI = create<UIState>()((set, get) => ({
       const d = useData.getState();
       const n = d.entities[id];
       const hasLinks = d.links.some((l) => l.a === id || l.b === id);
-      if (n && n.type === 'note' && !n.title.trim() && !n.content.trim() && !n.tags.length && !hasLinks) {
+      if (n && n.type === 'note' && !n.title.trim() && !n.content.trim() && !tagsOf(n).length && !n.projectId && !hasLinks) {
         d.remove(id, { silent: true });
-        set({ focusId: null });
+        if (get().focusId === id) set({ focusId: null });
       }
     }
   },

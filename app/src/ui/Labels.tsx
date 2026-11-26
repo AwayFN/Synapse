@@ -7,7 +7,7 @@ import { rgbTriplet } from '../lib/color';
 import { shortCode } from '../lib/random';
 import { excerpt, wordCount } from '../lib/text';
 import { fmtDateNum, fmtDay, fmtTime } from '../lib/time';
-import { TASK_STATUS_LABEL, TYPE_LABEL, type EntityType } from '../types';
+import { bodyOf, hasProject, tagsOf, TASK_STATUS_LABEL, TYPE_LABEL, type EntityType } from '../types';
 
 export const TYPE_TAG: Record<EntityType, string> = { project: 'PRJ', task: 'TSK', note: 'NOTE', slot: 'SLOT' };
 
@@ -25,34 +25,43 @@ function subline(s: DataState, id: string): string {
         }
       }
       const st = e.status === 'done' ? 'terminé' : 'en cours';
-      return `${done}/${total} tâches · ${st}${e.deadline ? ` · ⟶ ${fmtDateNum(e.deadline)}` : ''}`;
+      const tags = tagsOf(e);
+      return `${done}/${total} tâches · ${st}${e.deadline ? ` · ⟶ ${fmtDateNum(e.deadline)}` : ''}${tags.length ? ` · ${tags.slice(0, 3).map((t) => `#${t}`).join(' ')}` : ''}`;
     }
     case 'task': {
       const parts: string[] = [TASK_STATUS_LABEL[e.status]];
       if (e.projectId && s.entities[e.projectId]) parts.push(`↳ ${displayTitle(s.entities[e.projectId])}`);
       if (e.date) parts.push(`${fmtDay(e.date)}${e.time != null ? ' ' + fmtTime(e.time) : ''}`);
+      const tags = tagsOf(e);
+      if (tags.length) parts.push(tags.slice(0, 3).map((t) => `#${t}`).join(' '));
       return parts.join(' · ');
     }
-    case 'note':
-      return e.tags.length ? e.tags.map((t) => `#${t}`).join(' ') : `${wordCount(e.content)} mots`;
-    case 'slot':
-      return `${fmtTime(e.start)} → ${fmtTime(e.end)} · ${fmtDay(e.date)}`;
+    case 'note': {
+      const parts: string[] = [];
+      if (e.projectId && s.entities[e.projectId]) parts.push(`↳ ${displayTitle(s.entities[e.projectId])}`);
+      const tags = tagsOf(e);
+      parts.push(tags.length ? tags.map((t) => `#${t}`).join(' ') : `${wordCount(e.content)} mots`);
+      return parts.join(' · ');
+    }
+    case 'slot': {
+      const tags = tagsOf(e);
+      return `${fmtTime(e.start)} → ${fmtTime(e.end)} · ${fmtDay(e.date)}${tags.length ? ` · ${tags.slice(0, 3).map((t) => `#${t}`).join(' ')}` : ''}`;
+    }
   }
 }
 
 function cardText(s: DataState, id: string): string {
   const e = s.entities[id];
   if (!e) return '';
-  if (e.type === 'note') return excerpt(e.content, 140);
-  return excerpt(e.description, 140);
+  return excerpt(bodyOf(e), 140);
 }
 
 function linkCount(s: DataState, id: string): number {
   let n = 0;
   for (const l of s.links) if (l.a === id || l.b === id) n++;
   const e = s.entities[id];
-  if (e?.type === 'task' && e.projectId) n++;
-  if (e?.type === 'project') for (const x of Object.values(s.entities)) if (x.type === 'task' && x.projectId === id) n++;
+  if (hasProject(e) && e.projectId) n++;
+  if (e?.type === 'project') for (const x of Object.values(s.entities)) if (hasProject(x) && x.projectId === id) n++;
   return n;
 }
 

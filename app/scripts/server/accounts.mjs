@@ -11,7 +11,19 @@ import { randomToken, readJsonFile, safeEqual, sha256, writeJsonAtomic } from '.
 
 export const SERVER_ROLES = ['createur', 'admin', 'membre'];
 export const isStaff = (a) => !!a && a.status !== 'suspendu' && (a.role === 'createur' || a.role === 'admin');
-const SESSION_DAYS = 90;
+/**
+ * Une session reste ouverte tant qu'elle sert (une fois tous les 180 jours suffit) : on crée son compte (ou on se
+ * connecte) une fois par appareil, puis c'est bon, jusqu'à « Se déconnecter ».
+ */
+const SESSION_IDLE_DAYS = 180;
+/** Le genre d'appareil d'une session : l'application Android, l'application Windows, ou un navigateur */
+export const APPS = ['android', 'windows', 'navigateur'];
+export function deviceOf(req) {
+  const ua = String(req.headers['user-agent'] || '').slice(0, 200);
+  const h = String(req.headers['x-synapse-app'] || '').toLowerCase();
+  const app = /SynapseAndroid\//.test(ua) ? 'android' : h === 'windows' ? 'windows' : 'navigateur';
+  return { ua, app };
+}
 const RESET_HOURS = 48;
 const LOCK_AFTER = 8;
 const LOCK_MS = 15 * 60_000;
@@ -195,6 +207,7 @@ export class Accounts {
       createdAt: Date.now(),
       lastSeen: Date.now(),
       ua: String(meta.ua || '').slice(0, 160),
+      app: APPS.includes(meta.app) ? meta.app : 'navigateur',
       via: String(meta.via || ''),
     };
     this.save();
@@ -207,7 +220,7 @@ export class Accounts {
     if (!s) return null;
     const now = Date.now();
     const account = this.get(s.accountId);
-    if (!account || now - s.createdAt > SESSION_DAYS * 86400_000) {
+    if (!account || now - (s.lastSeen || s.createdAt) > SESSION_IDLE_DAYS * 86400_000) {
       delete this.d.sessions[hash];
       this.save();
       return null;
@@ -217,6 +230,18 @@ export class Accounts {
       this.save();
     }
     return { hash, s, account };
+  }
+  /** L'appareil d'une session (il peut changer : mise à jour du navigateur, de l'application) */
+  touchDevice(hash, meta) {
+    const s = this.d.sessions[hash];
+    if (!s || !meta) return;
+    const ua = String(meta.ua || '').slice(0, 160);
+    const app = APPS.includes(meta.app) ? meta.app : 'navigateur';
+    if (s.ua !== ua || s.app !== app) {
+      s.ua = ua;
+      s.app = app;
+      this.save();
+    }
   }
   endSession(token) {
     if (typeof token !== 'string') return;
@@ -235,9 +260,9 @@ export class Accounts {
     return n;
   }
   sessionsOf(accountId) {
-    return Object.values(this.d.sessions)
-      .filter((s) => s.accountId === accountId)
-      .map((s) => ({ createdAt: s.createdAt, lastSeen: s.lastSeen, ua: s.ua, via: s.via }))
+    return Object.entries(this.d.sessions)
+      .filter(([, s]) => s.accountId === accountId)
+      .map(([hash, s]) => ({ hash, createdAt: s.createdAt, lastSeen: s.lastSeen, ua: s.ua, app: s.app || 'navigateur', via: s.via }))
       .sort((a, b) => b.lastSeen - a.lastSeen);
   }
 
@@ -377,7 +402,7 @@ export class Accounts {
   prune() {
     const now = Date.now();
     for (const [k, s] of Object.entries(this.d.sessions)) {
-      if (now - s.createdAt > SESSION_DAYS * 86400_000 || !this.d.accounts[s.accountId]) delete this.d.sessions[k];
+      if (now - (s.lastSeen || s.createdAt) > SESSION_IDLE_DAYS * 86400_000 || !this.d.accounts[s.accountId]) delete this.d.sessions[k];
     }
     for (const [k, r] of Object.entries(this.d.resets)) if (now > r.expiresAt || !this.d.accounts[r.accountId]) delete this.d.resets[k];
     for (const [k, l] of Object.entries(this.d.links)) if (now > l.expiresAt || !this.d.accounts[l.accountId]) delete this.d.links[k];

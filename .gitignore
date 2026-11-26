@@ -5,3 +5,10 @@ app/node_modules/
 # Fichiers temporaires
 *.log
 *.tmp
+# Application Android : fichiers de construction (recréés par Gradle)
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.jks
+*.keystore

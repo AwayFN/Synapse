@@ -3,18 +3,19 @@ import { useData } from '../store/data';
 import { useUI } from '../store/ui';
 import { NEON } from '../lib/color';
 import { hashString } from '../lib/random';
+import { tagsOf } from '../types';
 import { cvar } from './common';
 
 export function tagColor(tag: string): string {
   return NEON[hashString(tag) % NEON.length];
 }
 
-/** All note tags with their count, most used first */
+/** Tous les tags (projets, tâches, notes, créneaux) avec leur nombre, les plus utilisés d'abord */
 export function useAllTags(): [string, number][] {
   // select a primitive key so the store subscription stays stable
   const key = useData((s) => {
     const m = new Map<string, number>();
-    for (const e of Object.values(s.entities)) if (e.type === 'note') for (const t of e.tags) m.set(t, (m.get(t) ?? 0) + 1);
+    for (const e of Object.values(s.entities)) for (const t of tagsOf(e)) m.set(t, (m.get(t) ?? 0) + 1);
     return [...m.entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .map(([t, n]) => `${t}\u0001${n}`)
@@ -26,7 +27,7 @@ export function useAllTags(): [string, number][] {
   );
 }
 
-/** Clickable tag filter: matching note constellations stay lit, everything else fades */
+/** Filtre par tag : les éléments qui ont ce tag (quelle que soit leur sorte) restent allumés, le reste s'estompe */
 export function TagBar() {
   const tags = useAllTags();
   const active = useUI((s) => s.activeTags);

@@ -87,6 +87,8 @@ interface Overview {
   accounts: { total: number; createurs: number; admins: number; membres: number; suspendus: number; new7: number; new30: number };
   active: { today: number; d7: number; d30: number };
   online: { accounts: number; guests: number; windows: number };
+  /** appareils connectés à un compte (une session chacun) */
+  devices?: { android: number; windows: number; navigateur: number };
   content: { brains: number; nonEmpty: number; neurons: number; links: number; shared: number; members: number; invites: number };
   storage: number;
   feedback: { unread: number; total: number };
@@ -112,8 +114,27 @@ interface User {
   joined: number;
   sessions: number;
   device: string;
+  devices?: { app: AppKind; ua: string; createdAt: number; lastSeen: number; online?: boolean }[];
+  onlineOn?: AppKind[];
+  pc?: boolean;
   activeDays: number;
   online: boolean;
+}
+type AppKind = 'android' | 'windows' | 'navigateur';
+const APP_LABEL: Record<AppKind, string> = { android: 'Application Android', windows: 'Application Windows', navigateur: 'Navigateur' };
+const APP_ICON: Record<AppKind, string> = { android: '▣', windows: '▤', navigateur: '◌' };
+interface Publication {
+  eligible: boolean;
+  enabled: boolean;
+  depot: string;
+  branche: string;
+  url: string | null;
+  at: number;
+  error: string;
+  busy: boolean;
+  pending: boolean;
+  current: string | null;
+  fixe: string;
 }
 interface Signup {
   id: string;
@@ -190,6 +211,7 @@ interface ServerDetails {
   windows: number;
   publicUrl: string | null;
   envPublicUrl: boolean;
+  publication?: Publication;
 }
 
 // ───────────────────────── petits éléments
@@ -332,17 +354,24 @@ function HBars({ rows }: { rows: { key: string; label: ReactNode; value: number;
   );
 }
 
-const VIEW_LABEL: Record<string, string> = { network: 'Réseau 3D', agenda: 'Emploi du temps', tasks: 'Tâches' };
+const VIEW_LABEL: Record<string, string> = { network: 'Réseau 3D', agenda: 'Emploi du temps', tasks: 'Tâches', notes: 'Notes' };
 
 function OverviewTab() {
   const { data: o, error } = useApi<Overview>('/api/admin/overview', 15000);
   if (!o) return <div className="mono text-[11px] text-white/40">{error ? 'Impossible de charger.' : 'Chargement…'}</div>;
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-4 max-md:grid-cols-2 gap-3">
         <Tile label="Comptes" value={o.accounts.total} sub={`+${o.accounts.new7} cette semaine · ${o.accounts.admins + o.accounts.createurs} équipe`} />
         <Tile label="Actifs aujourd’hui" value={o.active.today} sub={`${o.active.d7} sur 7 j · ${o.active.d30} sur 30 j`} />
         <Tile label="En ligne maintenant" value={o.online.accounts + o.online.guests} sub={`${plural(o.online.accounts, 'compte')} · ${plural(o.online.guests, 'invité')}`} />
+        {o.devices && (
+          <Tile
+            label="Appareils connectés"
+            value={o.devices.android + o.devices.windows + o.devices.navigateur}
+            sub={`${o.devices.android} Android · ${o.devices.windows} Windows · ${o.devices.navigateur} navigateur${o.devices.navigateur > 1 ? 's' : ''}`}
+          />
+        )}
         <Tile label="Neurones" value={o.content.neurons.toLocaleString('fr-FR')} sub={`${o.content.links.toLocaleString('fr-FR')} liens · ${o.content.nonEmpty} cerveaux remplis`} />
         <Tile label="Cerveaux partagés" value={o.content.shared} sub={`${plural(o.content.members, 'membre')} · ${plural(o.content.invites, 'invitation')} en attente`} />
         <Tile label="Retours non lus" value={o.feedback.unread} sub={`${o.feedback.total} au total`} />
@@ -350,7 +379,7 @@ function OverviewTab() {
         <Tile label="Stockage" value={fmtBytes(o.storage)} sub={`serveur allumé depuis ${fmtUptime(o.server.uptime)}`} />
       </div>
       <ActivityChart series={o.series} />
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 max-md:grid-cols-1 gap-4">
         <Panel title="Vues utilisées · 30 jours">
           <HBars rows={Object.entries(VIEW_LABEL).map(([k, label]) => ({ key: k, label, value: o.views[k] || 0, display: fmtHours(o.views[k] || 0) }))} />
         </Panel>
@@ -378,7 +407,7 @@ function OverviewTab() {
 }
 
 // ───────────────────────── personnes
-const VIA: Record<string, string> = { local: 'PC du créateur', installation: 'installation', invitation: 'invitation', cerveau: 'invité dans un cerveau', ouverte: 'inscription libre' };
+const VIA: Record<string, string> = { local: 'PC du créateur', installation: 'installation sur son PC (serveur)', invitation: 'invitation', cerveau: 'invité dans un cerveau', ouverte: 'inscription libre (application ou navigateur)' };
 
 function UserRow({ u, me, isCreator, onChange }: { u: User; me: string; isCreator: boolean; onChange: (users: User[]) => void }) {
   const [open, setOpen] = useState(false);
@@ -410,21 +439,25 @@ function UserRow({ u, me, isCreator, onChange }: { u: User; me: string; isCreato
         <span className="min-w-0 flex-1">
           <span className="block text-[13px] text-white/85 truncate">
             {u.name || 'Sans nom'}
-            {u.online && <span className="mono text-[9px] text-white/55 ml-2">● EN LIGNE</span>}
+            {u.online && (
+              <span className="mono text-[9px] text-[#39ff88] ml-2">
+                ● EN LIGNE{u.onlineOn?.length ? ` · ${u.onlineOn.map((a) => (a === 'android' ? 'ANDROID' : a === 'windows' ? 'WINDOWS' : 'NAVIGATEUR')).join(' + ')}` : ''}
+              </span>
+            )}
             {u.status === 'suspendu' && <span className="mono text-[9px] text-[rgb(var(--alert))] ml-2">SUSPENDU</span>}
           </span>
           <span className="block mono text-[9.5px] tracking-[0.06em] text-white/35 truncate">{u.email || 'pas d’e-mail'}</span>
         </span>
         <span className="mono text-[9.5px] text-white/55 w-[70px] uppercase">{SERVER_ROLE_LABEL[u.role]}</span>
-        <span className="mono text-[10px] text-white/60 w-[90px] text-right tabular-nums">{u.brain.n} neurones</span>
+        <span className="mono text-[10px] text-white/60 w-[90px] text-right tabular-nums max-md:hidden">{u.brain.n} neurones</span>
         <span className="mono text-[10px] text-white/45 w-[110px] text-right">{u.online ? 'maintenant' : ago(u.lastSeen)}</span>
-        <span className="mono text-[10px] text-white/45 w-[80px] text-right tabular-nums" title="jours actifs sur les 30 derniers">
+        <span className="mono text-[10px] text-white/45 w-[80px] text-right tabular-nums max-md:hidden" title="jours actifs sur les 30 derniers">
           {u.activeDays}/30 j
         </span>
       </button>
       {open && (
         <div className="pl-10 pb-4 flex flex-col gap-3 anim-pop">
-          <div className="grid grid-cols-3 gap-x-6 gap-y-1.5 text-[11.5px]">
+          <div className="grid grid-cols-3 max-md:grid-cols-1 gap-x-6 gap-y-1.5 text-[11.5px]">
             <span className="text-white/40">
               Inscrit : <span className="text-white/70">{fmtDate(u.createdAt)}</span>
             </span>
@@ -445,6 +478,22 @@ function UserRow({ u, me, isCreator, onChange }: { u: User; me: string; isCreato
               Sessions : <span className="text-white/70">{u.sessions}</span> · mot de passe : <span className="text-white/70">{u.hasPassword ? 'oui' : 'non'}</span>
             </span>
           </div>
+          {!!u.devices?.length && (
+            <div className="flex flex-col gap-1" data-user-devices>
+              <span className="xs-label">Ses appareils (connecté sur chacun)</span>
+              {u.devices.map((d, i) => {
+                const live = d.online ?? u.onlineOn?.includes(d.app);
+                return (
+                  <div key={i} className="flex items-center gap-2 text-[11.5px] flex-wrap">
+                    <span className={`mono w-4 text-center ${live ? 'text-[#39ff88]' : 'text-white/40'}`}>{APP_ICON[d.app] ?? '◌'}</span>
+                    <span className="text-white/75">{APP_LABEL[d.app] ?? 'Navigateur'}</span>
+                    <span className="text-white/35">{device(d.ua)}</span>
+                    <span className="text-white/35 ml-auto">{live ? <span className="text-[#39ff88]">en ligne</span> : `vu ${ago(d.lastSeen)}`} · depuis le {fmtDate(d.createdAt)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
           {manageable ? (
             <div className="flex flex-wrap items-center gap-2">
               {u.role !== 'createur' && (
@@ -546,9 +595,9 @@ function PeopleTab() {
           <span className="w-7" />
           <span className="flex-1">Personne</span>
           <span className="w-[70px]">Rôle</span>
-          <span className="w-[90px] text-right">Cerveau</span>
+          <span className="w-[90px] text-right max-md:hidden">Cerveau</span>
           <span className="w-[110px] text-right">Vu</span>
-          <span className="w-[80px] text-right">Assiduité</span>
+          <span className="w-[80px] text-right max-md:hidden">Assiduité</span>
         </div>
         {!data ? (
           <div className="mono text-[11px] text-white/40 py-4">Chargement…</div>
@@ -964,6 +1013,87 @@ function SettingsTab() {
 }
 
 // ───────────────────────── serveur
+/**
+ * L'adresse du Synapse central, publiée sur GitHub : les applications (Android, PC Windows) la retrouvent toutes
+ * seules, même quand l'adresse Internet gratuite change (à chaque redémarrage de Synapse).
+ */
+function PublicationPanel({ initial }: { initial: Publication }) {
+  const [p, setP] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setP(initial), [initial]);
+  if (!p.eligible) {
+    return (
+      <Panel title="Adresse pour les applications">
+        <div className="text-[12px] text-white/50 leading-relaxed">
+          Les applications (Android, PC) trouvent le Synapse central grâce au dépôt GitHub <span className="mono text-white/70">{p.depot || '—'}</span>. L’adresse y est publiée
+          automatiquement par le PC du créateur (celui qui a la copie git du dépôt).
+          {p.fixe ? (
+            <>
+              {' '}
+              Adresse fixe indiquée : <span className="mono text-white/70">{p.fixe}</span>.
+            </>
+          ) : null}
+        </div>
+      </Panel>
+    );
+  }
+  const status = p.busy
+    ? 'Publication en cours…'
+    : p.error
+      ? `Échec : ${p.error}`
+      : p.url
+        ? p.url === p.current
+          ? `À jour · ${p.url}`
+          : `Publiée : ${p.url}${p.current ? ` · nouvelle adresse ${p.current} bientôt publiée` : ''}`
+        : p.current
+          ? 'Pas encore publiée'
+          : 'Ouvre l’accès Internet : son adresse sera publiée automatiquement';
+  return (
+    <Panel title="Adresse pour les applications">
+      <div className="text-[12px] text-white/55 leading-relaxed">
+        Les applications Synapse (téléphones Android, PC Windows de tes amis) se connectent à ce serveur. Son adresse Internet est publiée sur ton GitHub (
+        <span className="mono text-white/75">{p.depot}</span>, branche <span className="mono text-white/75">{p.branche}</span>) dès qu’elle change : elles la retrouvent
+        toutes seules, sans se déconnecter. La publication utilise la connexion GitHub déjà enregistrée sur ce PC.
+      </div>
+      <div className="flex items-center gap-3 mt-3 flex-wrap">
+        <span className={`w-2 h-2 rounded-full ${p.error ? 'bg-[rgb(var(--alert))]' : p.url && p.url === p.current ? 'bg-[#39ff88] shadow-[0_0_8px_#39ff88]' : 'bg-white/30'}`} />
+        <span className={`mono text-[11px] break-all ${p.error ? 'text-[rgb(var(--alert))]' : 'text-white/70'}`} data-publication-status>
+          {p.enabled ? status : 'Publication coupée'}
+        </span>
+        {p.at > 0 && !p.busy && <span className="mono text-[10px] text-white/35">{fmtDateTime(p.at)}</span>}
+      </div>
+      <div className="flex gap-2 mt-3 flex-wrap">
+        <button
+          className="btn"
+          disabled={busy || !p.current}
+          onClick={async () => {
+            setBusy(true);
+            const r = await api<Publication>('/api/admin/publication/now', {}).catch(() => null);
+            if (r) setP(r);
+            setBusy(false);
+          }}
+        >
+          {busy ? 'Publication…' : 'Publier maintenant'}
+        </button>
+        <button
+          className="btn btn-ghost"
+          onClick={async () => {
+            const r = await api<Publication>('/api/admin/publication', { on: !p.enabled }).catch(() => null);
+            if (r) setP(r);
+          }}
+        >
+          {p.enabled ? 'Couper la publication automatique' : 'Activer la publication automatique'}
+        </button>
+      </div>
+      {p.error && (
+        <div className="text-[11.5px] text-white/45 mt-2 leading-relaxed">
+          Si GitHub refuse : publie une fois Synapse depuis ce PC (git push) pour enregistrer ta connexion GitHub, puis « Publier maintenant ».
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 function ServerTab() {
   const account = useSession((s) => s.account)!;
   const local = useSession((s) => s.local);
@@ -980,7 +1110,7 @@ function ServerTab() {
   if (!d) return <div className="mono text-[11px] text-white/40">Chargement…</div>;
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-4 max-md:grid-cols-2 gap-3">
         <Tile label="Mode" value={d.hosted ? 'En ligne' : 'Sur ton PC'} sub={d.hosted ? 'hébergeur' : 'tant que le PC est allumé'} />
         <Tile label="Allumé depuis" value={fmtUptime(d.uptime)} sub={`depuis ${fmtDateTime(d.started)}`} />
         <Tile label="Mémoire" value={fmtBytes(d.memory)} sub={`${d.brainsLoaded} cerveaux chargés · ${d.windows} fenêtres`} />
@@ -997,6 +1127,8 @@ function ServerTab() {
         </Panel>
       )}
 
+      {d.publication && <PublicationPanel initial={d.publication} />}
+
       {!d.hosted && settings.data && (
         <Panel title="Adresse fixe (avancé)">
           <div className="text-[12px] text-white/55 leading-relaxed">
@@ -1004,7 +1136,7 @@ function ServerTab() {
             un compte Cloudflare gratuit et un nom de domaine (~10 €/an). Dans Cloudflare : Zero Trust → Networks → Tunnels → « Create a tunnel » (Cloudflared), puis
             « Public hostname » vers <span className="mono text-white/75">http://localhost:5173</span>. Colle ici le jeton du tunnel et l’adresse, puis rouvre l’accès Internet.
           </div>
-          <div className="grid grid-cols-[1fr_1fr_auto] gap-3 mt-4 items-end">
+          <div className="grid grid-cols-[1fr_1fr_auto] max-md:grid-cols-1 gap-3 mt-4 items-end">
             <label className="flex flex-col gap-1.5">
               <span className="xs-label">Adresse publique</span>
               <input
@@ -1108,9 +1240,9 @@ export function AdminPanel() {
   return (
     <div className="fixed inset-0 z-50 anim-fade" data-ui>
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={close} />
-      <div className="absolute inset-4 glass neon flex flex-col anim-pop overflow-hidden">
+      <div className="absolute inset-4 max-md:inset-0 glass neon flex flex-col anim-pop overflow-hidden">
         <Corners />
-        <div className="flex items-center gap-4 px-7 pt-6 pb-4 border-b border-white/[0.06]">
+        <div className="flex items-center gap-4 max-md:gap-2 flex-wrap px-7 max-md:px-3 pt-6 max-md:pt-3 pb-4 max-md:pb-2 border-b border-white/[0.06]">
           <div className="w-2 h-2 rotate-45 bg-[rgb(var(--pearl))] shadow-[0_0_10px_rgb(var(--pearl)/0.7)]" />
           <div>
             <div className="hud text-[11px] text-white/85">Espace admin · {name || 'Synapse'}</div>
@@ -1118,7 +1250,7 @@ export function AdminPanel() {
               {account.name || 'Créateur'} · {SERVER_ROLE_LABEL[account.role]}
             </div>
           </div>
-          <div className="seg ml-6 min-w-0 overflow-x-auto scroll-thin">
+          <div className="seg ml-6 max-md:ml-0 max-md:order-last max-md:w-full min-w-0 overflow-x-auto scroll-thin">
             {TABS.map((t) => (
               <button key={t.id} data-on={tab === t.id ? '1' : '0'} onClick={() => setTab(t.id)}>
                 {t.label}
@@ -1130,7 +1262,7 @@ export function AdminPanel() {
             ✕ <span className="text-white/35 ml-1">Échap</span>
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto overflow-x-hidden scroll-thin px-7 py-6">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden scroll-thin px-7 max-md:px-3 py-6 max-md:py-4">
           {tab === 'vue' && <OverviewTab />}
           {tab === 'personnes' && <PeopleTab />}
           {tab === 'inscriptions' && <SignupsTab />}

@@ -1,18 +1,22 @@
 import type { Activity, Entity, Link } from '../types';
 import { TYPE_LABEL } from '../types';
-import { displayTitle, setDataReadOnly, useData } from '../store/data';
+import { displayTitle, normalizeEntities, setDataReadOnly, useData } from '../store/data';
 import { useUI } from '../store/ui';
 import { layout } from '../scene/layout';
 import { applyRemote, applySnapshot, allowed, compact, diff, isApplyingRemote, type Op } from './ops';
 import { initialsOf, useSession, type Announcement, type Member, type Mode, type Presence, type Role, type ShareStatus } from './session';
+import { android } from './native';
 
 /**
- * Connexion en direct avec le serveur du cerveau ouvert.
+ * Connexion en direct avec le serveur du cerveau ouvert (le Synapse central).
  *   - réception : un flux d'évènements (état complet au branchement, puis changements, présence…).
  *     D'abord un flux continu (Server-Sent Events) ; si rien n'arrive (certains intermédiaires, comme les
  *     adresses gratuites trycloudflare.com, le retiennent), des requêtes « en attente » prennent le relais.
- *   - envoi : les modifications locales partent par petits lots ; ce qui n'a pas pu partir attend
- *     la reconnexion (rien n'est perdu si la connexion saute quelques secondes)
+ *   - envoi : les modifications locales partent par petits lots ; ce qui n'a pas pu partir attend la reconnexion,
+ *     gardé aussi sur l'appareil : rien n'est perdu, même si l'application se ferme pendant une coupure.
+ *   - réseau qui change (Wi-Fi ↔ câble ↔ 4G), mise en veille : le serveur envoie un signe de vie toutes les 15 s ;
+ *     sans nouvelles pendant 45 s, ou dès que l'appareil retrouve un réseau, la connexion repart toute seule
+ *     (en une seconde ou deux), sans se déconnecter ni relancer l'application.
  */
 export class ApiError extends Error {
   status: number;
@@ -31,14 +35,23 @@ export function setBrain(id: string | null) {
 }
 const withBrain = (path: string) => (brainId ? `${path}${path.includes('?') ? '&' : '?'}b=${encodeURIComponent(brainId)}` : path);
 
-export async function api<T = Record<string, unknown>>(path: string, body?: unknown): Promise<T> {
-  const r = await fetch(withBrain(path), {
-    method: body === undefined ? 'GET' : 'POST',
-    headers: { 'X-Synapse': '1', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    credentials: 'same-origin',
-    cache: 'no-store',
-  });
+/** Une requête qui ne répond pas (connexion morte après un changement de réseau) est abandonnée, puis refaite */
+export async function api<T = Record<string, unknown>>(path: string, body?: unknown, timeoutMs = 20000): Promise<T> {
+  const ctrl = new AbortController();
+  const timer = window.setTimeout(() => ctrl.abort(), timeoutMs);
+  let r: Response;
+  try {
+    r = await fetch(withBrain(path), {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: { 'X-Synapse': '1', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      credentials: 'same-origin',
+      cache: 'no-store',
+      signal: ctrl.signal,
+    });
+  } finally {
+    window.clearTimeout(timer);
+  }
   let data: unknown = null;
   try {
     data = await r.json();
@@ -96,16 +109,25 @@ let transport: Transport = 'sse';
 let generation = 0;
 let es: EventSource | null = null;
 let sseWatchdog: number | undefined;
+let pollAbort: AbortController | null = null;
+/** dernier signe du serveur (évènement, signe de vie, réponse d'une requête en attente) */
+let lastEventAt = Date.now();
+/** sans nouvelles du serveur depuis ce délai, la connexion est considérée comme morte */
+const STALE_MS = 45_000;
 
 let outbox: Op[] = [];
+/** le lot en cours d'envoi (pas encore confirmé par le serveur) */
+let inflight: Op[] = [];
 let sending = false;
 let flushTimer: number | undefined;
 let reconnectTimer: number | undefined;
-let backoff = 1000;
+let backoff = 500;
 let firstReset: ((ok: boolean) => void) | null = null;
 const unsubscribers: (() => void)[] = [];
 let started = false;
 let remoteToastAt = 0;
+let offlineSince = 0;
+let unreachableSaid = false;
 
 const S = () => useSession.getState();
 const toast = (text: string, color = '#00e5ff', action?: { label: string; run: () => void }) => useUI.getState().toast({ text, color, action });
@@ -116,9 +138,56 @@ function membersMap(list: Member[]) {
   return m;
 }
 
+function setMode(mode: Mode) {
+  if (S().mode === mode) return;
+  if (mode === 'offline' && !offlineSince) offlineSince = Date.now();
+  if (mode === 'online') {
+    offlineSince = 0;
+    unreachableSaid = false;
+  }
+  useSession.setState({ mode });
+}
+
+// ───────────────────────── ce qui attend (gardé sur l'appareil pendant une coupure)
+const OUTBOX_PREFIX = 'synapse-attente-';
+let persistTimer: number | undefined;
+/** Pour un compte (pas un invité sans compte : rien de son passage ne reste sur son appareil) */
+const canPersist = () => !!S().account && !!brainId;
+
+function persistOutbox(now = false) {
+  if (!canPersist()) return;
+  const write = () => {
+    persistTimer = undefined;
+    const pending = [...inflight, ...outbox];
+    try {
+      if (pending.length) localStorage.setItem(OUTBOX_PREFIX + brainId, JSON.stringify(pending.slice(-2000)));
+      else localStorage.removeItem(OUTBOX_PREFIX + brainId);
+    } catch {
+      /* stockage plein : tant pis, elles partiront si la page reste ouverte */
+    }
+  };
+  if (now) {
+    window.clearTimeout(persistTimer);
+    write();
+  } else if (persistTimer === undefined) persistTimer = window.setTimeout(write, 300);
+}
+
+function restoreOutbox() {
+  if (!canPersist()) return;
+  try {
+    const raw = localStorage.getItem(OUTBOX_PREFIX + brainId);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (Array.isArray(saved) && saved.length) outbox = [...saved, ...outbox];
+  } catch {
+    /* illisible : ignoré */
+  }
+}
+
 let deniedAt = 0;
 function onReset(snap: Snapshot) {
-  backoff = 1000;
+  backoff = 500;
+  lastEventAt = Date.now();
   const isOwner = snap.role === 'owner';
   // « peut regarder » : rien ne se modifie chez lui, et un petit mot le lui rappelle
   setDataReadOnly(snap.role === 'lecture', () => {
@@ -128,9 +197,11 @@ function onReset(snap: Snapshot) {
   });
   // positions 3D : un invité reprend la carte du propriétaire ; le propriétaire complète la sienne
   layout.useSavedPositions(snap.layout || {}, isOwner ? 'merge' : 'replace');
-  applySnapshot(snap);
+  applySnapshot({ ...snap, entities: normalizeEntities(snap.entities) });
+  // ce qui n'est pas encore arrivé au serveur reste visible ici (il partira juste après)
+  const pending = [...inflight, ...outbox];
+  if (pending.length && snap.role !== 'lecture') applyRemote(pending, { fx: false });
   useSession.setState({
-    mode: 'online',
     role: snap.role,
     me: { ...snap.me, initials: snap.me.initials || initialsOf(snap.me.name) },
     members: membersMap(snap.members),
@@ -138,17 +209,22 @@ function onReset(snap: Snapshot) {
     ownerName: snap.brain.ownerName,
     brainName: snap.brain.name,
   });
+  setMode('online');
   seenOnline = new Set((snap.presence || []).map((p) => p.id));
   if (firstReset) {
     firstReset(true);
     firstReset = null;
   }
   sendPresence(true);
+  if (outbox.length) void flush();
 }
 
 function onBatch(b: { seq: number; by: string; clientId: string | null; ops: Op[] }) {
   if (b.clientId === clientId) return; // mon propre écho : déjà appliqué chez moi
-  applyRemote(b.ops, { fx: true });
+  applyRemote(
+    b.ops.map((o) => (o.t === 'put' ? { ...o, e: normalizeEntities({ [o.e.id]: o.e })[o.e.id] } : o)),
+    { fx: true },
+  );
   // un élément créé par quelqu'un d'autre : discrète notification
   if (b.by !== S().me.id) {
     const puts = b.ops.filter((o): o is Extract<Op, { t: 'put' }> => o.t === 'put');
@@ -206,13 +282,16 @@ function onBye(d: { reason: string }) {
   }
   const mode = BYE_MODE[d.reason] ?? 'closed';
   // le propriétaire ne « perd » jamais son propre cerveau : seulement une reconnexion
-  useSession.setState({ mode: S().role === 'owner' && mode === 'revoked' ? 'closed' : mode });
-  if (mode === 'closed' || mode === 'maintenance') scheduleReconnect(mode === 'maintenance' ? 20000 : 5000);
+  setMode(S().role === 'owner' && mode === 'revoked' ? 'closed' : mode);
+  if (mode === 'closed' || mode === 'maintenance') scheduleReconnect(mode === 'maintenance' ? 20000 : 3000);
 }
 
 function dispatch(type: string, data: unknown) {
+  lastEventAt = Date.now();
   try {
     switch (type) {
+      case 'ping':
+        return;
       case 'reset':
         return onReset(data as Snapshot);
       case 'batch':
@@ -263,11 +342,15 @@ function stopTransport() {
     es.close();
     es = null;
   }
+  if (pollAbort) {
+    pollAbort.abort();
+    pollAbort = null;
+  }
 }
 
 function lostConnection() {
   stopTransport();
-  if (S().mode === 'online' || S().mode === 'connecting') useSession.setState({ mode: 'offline' });
+  if (S().mode === 'online' || S().mode === 'connecting') setMode('offline');
   if (firstReset) {
     firstReset(false);
     firstReset = null;
@@ -277,13 +360,14 @@ function lostConnection() {
 
 function connect() {
   stopTransport();
+  lastEventAt = Date.now();
   transport = preferredTransport();
   if (transport === 'poll') return void pollLoop(generation, true);
   const gen = generation;
   const source = new EventSource(withBrain(`/api/events?c=${encodeURIComponent(clientId)}`));
   es = source;
   let gotReset = false;
-  for (const type of ['reset', 'batch', 'presence', 'members', 'share', 'brain', 'announce', 'staff', 'bye']) {
+  for (const type of ['reset', 'batch', 'presence', 'members', 'share', 'brain', 'announce', 'staff', 'bye', 'ping']) {
     source.addEventListener(type, (ev) => {
       if (gen !== generation) return;
       if (type === 'reset') gotReset = true;
@@ -317,13 +401,20 @@ function connect() {
 async function pollLoop(gen: number, init: boolean) {
   while (gen === generation) {
     let r: Response;
+    const ctrl = new AbortController();
+    pollAbort = ctrl;
+    // une requête qui dépasse 40 s : la connexion est morte (changement de réseau), on la refait
+    const timer = window.setTimeout(() => ctrl.abort(), 40_000);
     try {
-      r = await fetch(withBrain(`/api/poll?c=${encodeURIComponent(clientId)}${init ? '&init=1' : ''}`), { credentials: 'same-origin', cache: 'no-store' });
+      r = await fetch(withBrain(`/api/poll?c=${encodeURIComponent(clientId)}${init ? '&init=1' : ''}`), { credentials: 'same-origin', cache: 'no-store', signal: ctrl.signal });
     } catch {
+      window.clearTimeout(timer);
       if (gen === generation) lostConnection();
       return;
     }
+    window.clearTimeout(timer);
     if (gen !== generation) return;
+    lastEventAt = Date.now();
     if (r.status === 409) {
       // le serveur ne connaît plus cette fenêtre (redémarrage) : on repart d'un état complet
       init = true;
@@ -352,34 +443,64 @@ async function pollLoop(gen: number, init: boolean) {
   }
 }
 
+/** Le serveur ne répond plus depuis 20 s : l'application Android vérifie s'il a changé d'adresse */
+function maybeUnreachable() {
+  if (unreachableSaid || !offlineSince || Date.now() - offlineSince < 20_000) return;
+  unreachableSaid = true;
+  try {
+    android()?.unreachable?.();
+  } catch {
+    /* pas dans l'application */
+  }
+}
+
 function scheduleReconnect(delay = backoff) {
   if (reconnectTimer !== undefined) return;
   reconnectTimer = window.setTimeout(async () => {
     reconnectTimer = undefined;
-    backoff = Math.min(15000, backoff * 1.7);
+    backoff = Math.min(8000, Math.round(backoff * 1.6));
     try {
-      const hello = await api<{ auth: string; account: unknown; suspended?: boolean; server?: { maintenance: string | null } }>('/api/hello');
-      if (hello.suspended) return useSession.setState({ mode: 'suspended' });
+      const hello = await api<{ auth: string; account: unknown; suspended?: boolean; server?: { maintenance: string | null } }>('/api/hello', undefined, 12000);
+      if (hello.suspended) return setMode('suspended');
       if (hello.server?.maintenance != null && hello.auth === 'none') {
-        useSession.setState({ mode: 'maintenance' });
+        setMode('maintenance');
         return scheduleReconnect(20000);
       }
       if (hello.auth === 'none') {
-        useSession.setState({ mode: S().account && !hello.account ? 'loggedout' : 'revoked' });
+        setMode(S().account && !hello.account ? 'loggedout' : 'revoked');
         return;
       }
       await flush();
       connect();
     } catch {
+      maybeUnreachable();
       scheduleReconnect();
     }
   }, delay);
+}
+
+/**
+ * Le réseau vient de changer (ou l'appareil revient de veille) : on n'attend pas, on se rebranche tout de suite.
+ * Rien n'est perdu : ce qui attend part juste avant.
+ */
+export function reconnectNow(reason = '') {
+  if (!started) return;
+  const m = S().mode;
+  if (m !== 'online' && m !== 'offline' && m !== 'closed' && m !== 'connecting') return;
+  void reason;
+  window.clearTimeout(reconnectTimer);
+  reconnectTimer = undefined;
+  backoff = 500;
+  stopTransport();
+  if (m === 'online') setMode('offline');
+  scheduleReconnect(150);
 }
 
 // ───────────────────────── envoi
 function queue(ops: Op[]) {
   if (!ops.length) return;
   outbox.push(...ops);
+  persistOutbox();
   if (flushTimer === undefined) flushTimer = window.setTimeout(() => void flush(), 120);
 }
 
@@ -390,30 +511,40 @@ async function flush(): Promise<void> {
   }
   if (sending || !outbox.length) return;
   const batch = compact(outbox.splice(0, 400));
+  inflight = batch;
   sending = true;
   try {
     const r = await api<{ seq: number; rejected: { i: number; reason: string }[]; fixes: Op[] }>('/api/ops', { clientId, ops: batch });
+    inflight = [];
     if (r.fixes?.length) applyRemote(r.fixes, { fx: false });
     if (r.rejected?.some((x) => x.reason === 'forbidden')) toast('TU PEUX SEULEMENT REGARDER CE CERVEAU : MODIFICATION ANNULÉE', '#ff4d6d');
     if (r.rejected?.some((x) => x.reason === 'locked')) toast('QUELQU’UN ÉCRIT DÉJÀ ICI : ATTENDS QU’IL AIT FINI', '#ffb020');
     if (r.rejected?.some((x) => x.reason === 'limit')) toast('LIMITE D’ÉLÉMENTS ATTEINTE SUR CE SERVEUR', '#ff4d6d');
   } catch (e) {
+    inflight = [];
     const status = e instanceof ApiError ? e.status : 0;
     if (status === 401 || status === 403) {
       outbox = [];
-      if (status === 401) useSession.setState({ mode: 'revoked' });
+      if (status === 401) setMode('revoked');
     } else if (status === 503) {
       outbox.unshift(...batch);
-      useSession.setState({ mode: 'maintenance' });
+      setMode('maintenance');
       scheduleReconnect(20000);
+    } else if (status === 400 || status === 413) {
+      // lot refusé tel quel (trop gros, illisible) : on ne le renvoie pas en boucle
+      toast('UNE MODIFICATION N’A PAS PU ÊTRE ENREGISTRÉE', '#ff4d6d');
     } else {
-      // pas de réseau : on réessaiera
+      // pas de réseau (ou connexion morte) : on réessaiera à la reconnexion
       outbox.unshift(...batch);
-      if (S().mode === 'online') useSession.setState({ mode: 'offline' });
+      if (S().mode === 'online') {
+        setMode('offline');
+        stopTransport();
+      }
       scheduleReconnect();
     }
   } finally {
     sending = false;
+    persistOutbox();
   }
   if (outbox.length && S().mode === 'online') flushTimer = window.setTimeout(() => void flush(), 200);
 }
@@ -460,6 +591,8 @@ export function startSync(): Promise<boolean> {
   if (started) return Promise.resolve(true);
   started = true;
   useSession.setState({ mode: 'connecting' });
+  // des modifications faites pendant une coupure, puis l'application fermée : elles partent maintenant
+  restoreOutbox();
   const ready = new Promise<boolean>((resolve) => {
     firstReset = resolve;
     window.setTimeout(() => {
@@ -475,7 +608,7 @@ export function startSync(): Promise<boolean> {
     useData.subscribe((next, prev) => {
       if (isApplyingRemote()) return;
       const mode = S().mode;
-      if (mode !== 'online' && mode !== 'offline') return;
+      if (mode !== 'online' && mode !== 'offline' && mode !== 'connecting' && mode !== 'closed') return;
       queue(allowed(diff(prev, next)));
     }),
   );
@@ -491,18 +624,58 @@ export function startSync(): Promise<boolean> {
   );
   const hb = window.setInterval(() => sendPresence(true), 25000);
   const lay = window.setInterval(uploadLayout, 15000);
+  // connexion silencieusement morte (aucun signe de vie du serveur depuis 45 s) : on se rebranche
+  const watch = window.setInterval(() => {
+    if (S().mode === 'online' && Date.now() - lastEventAt > STALE_MS) lostConnection();
+    if (S().mode === 'offline') maybeUnreachable();
+  }, 5000);
   unsubscribers.push(
     () => window.clearInterval(hb),
     () => window.clearInterval(lay),
+    () => window.clearInterval(watch),
   );
+  // le réseau revient ou change (Wi-Fi ↔ câble ↔ 4G) : reconnexion immédiate
+  window.addEventListener('online', () => reconnectNow('réseau'));
+  window.addEventListener('offline', () => {
+    if (S().mode === 'online') {
+      stopTransport();
+      setMode('offline');
+      scheduleReconnect(1000);
+    }
+  });
+  // retour au premier plan (téléphone sorti de veille, onglet revenu) : si la connexion a vieilli, on la refait
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') {
+      persistOutbox(true);
+      return;
+    }
+    const m = S().mode;
+    if (m === 'offline' || m === 'closed') reconnectNow('retour');
+    else if (m === 'online' && Date.now() - lastEventAt > 30_000) reconnectNow('retour après une pause');
+  });
+  // l'application Android prévient quand le réseau du téléphone change, ou qu'elle revient au premier plan
+  const w = window as unknown as { __synapseNetwork?: (on: boolean) => void; __synapseResume?: () => void };
+  w.__synapseNetwork = (on: boolean) => {
+    if (on) reconnectNow('réseau du téléphone');
+    else if (S().mode === 'online') {
+      stopTransport();
+      setMode('offline');
+      scheduleReconnect(1500);
+    }
+  };
+  w.__synapseResume = () => {
+    const m = S().mode;
+    if (m === 'offline' || m === 'closed' || Date.now() - lastEventAt > 30_000) reconnectNow('application rouverte');
+  };
   window.addEventListener('pagehide', () => {
+    persistOutbox(true);
     void flush();
   });
   return ready;
 }
 
 export function pendingChanges() {
-  return outbox.length + (sending ? 1 : 0);
+  return outbox.length + inflight.length;
 }
 
 /** Recharge l'état complet (après un import, par exemple) */

@@ -35,14 +35,17 @@ function cleanTags(v) {
   return [...new Set(v.map(normalizeTag).filter(Boolean))].slice(0, 30);
 }
 
-/** Les champs de chaque sorte d'élément */
+/**
+ * Les champs de chaque sorte d'élément. V6 : des tags sur tout (pas seulement les notes), et une note peut
+ * appartenir à un projet (ou rester « indépendante », comme une tâche).
+ */
 const FIELDS = {
   project: ['description', 'status', 'deadline'],
   task: ['description', 'projectId', 'status', 'date', 'time', 'order', 'doneAt'],
-  note: ['content', 'tags'],
+  note: ['content', 'projectId'],
   slot: ['description', 'projectId', 'date', 'start', 'end'],
 };
-const COMMON = ['title', 'color', 'createdAt', 'updatedAt', 'seed', 'private'];
+const COMMON = ['title', 'color', 'createdAt', 'updatedAt', 'seed', 'private', 'tags'];
 
 /** Valeur propre d'un champ, ou undefined si ce champ n'existe pas pour cette sorte d'élément */
 function cleanField(type, k, v, id = '') {
@@ -190,7 +193,7 @@ export function fromV4(d) {
       };
     } else {
       const tags = cleanTags([...(Array.isArray(raw.tags) ? raw.tags : []), ...(k && k !== 'note' && k !== 'pensee' ? [k] : [])]);
-      e = { ...base, type: 'note', color: pick(2, id), content: str(raw.body, 200_000), tags };
+      e = { ...base, type: 'note', color: pick(2, id), content: str(raw.body, 200_000), tags, projectId: null };
     }
     entities[id] = e;
   }
@@ -201,7 +204,8 @@ export function fromV4(d) {
     if (!l || !entities[l.a] || !entities[l.b]) continue;
     const a = entities[l.a];
     const b = entities[l.b];
-    const child = (a.type === 'task' || a.type === 'slot') && b.type === 'project' ? a : (b.type === 'task' || b.type === 'slot') && a.type === 'project' ? b : null;
+    const kid = (x) => x.type === 'task' || x.type === 'slot';
+    const child = kid(a) && b.type === 'project' ? a : kid(b) && a.type === 'project' ? b : null;
     const parent = child === a ? b : a;
     if (child && !child.projectId) {
       child.projectId = parent.id;
@@ -258,7 +262,7 @@ export class Brain {
       const e = cleanEntity(raw);
       if (e) entities[e.id] = e;
     }
-    // un projet disparu : ses tâches et créneaux restent, sans projet
+    // un projet disparu : ses tâches, créneaux et notes restent, sans projet
     for (const e of Object.values(entities)) if (e.projectId && entities[e.projectId]?.type !== 'project') e.projectId = null;
     const links = [];
     const pairs = new Set();
@@ -409,7 +413,7 @@ export class Brain {
         if (holder && holder.memberId !== m.id) return { ok: false, reason: 'locked', fix: this.restoreFix(m, cur.id) };
         delete S.entities[cur.id];
         S.links = S.links.filter((l) => l.a !== cur.id && l.b !== cur.id);
-        // ses tâches et créneaux restent, sans projet
+        // ses tâches, créneaux et notes restent, sans projet
         for (const e of Object.values(S.entities)) if (e.projectId === cur.id) S.entities[e.id] = { ...e, projectId: null };
         delete S.layout[cur.id];
         return { ok: true, op: { t: 'del', id: cur.id } };

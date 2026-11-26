@@ -1,11 +1,24 @@
 import { useState } from 'react';
-import { api, ApiError, clientId, openBrain } from '../sync/client';
+import { api, ApiError, clientId, openBrain, pendingChanges } from '../sync/client';
 import { deName, initialsOf, linkBases, ROLE_LABEL, SERVER_ROLE_LABEL, useSession } from '../sync/session';
+import { android, androidDownloadUrl, isAndroidApp, openExternal, releasesUrl } from '../sync/native';
 import { useUI } from '../store/ui';
 import { ALERT_HEX } from '../lib/color';
 import { Corners, cvar, Kbd } from './common';
 import { QrCode } from './Qr';
 import { JoinFriend, ReachButton, ShareSheetButton } from './Reach';
+
+/** Se déconnecter (sur ce PC aussi) : il faudra se reconnecter avec son e-mail et son mot de passe */
+export async function logout() {
+  if (pendingChanges() > 0 && !window.confirm('Des modifications n’ont pas encore pu partir (connexion coupée). Se déconnecter quand même ? Elles seraient perdues.')) return;
+  await api('/api/auth/logout', {}).catch(() => {});
+  try {
+    for (const k of Object.keys(localStorage)) if (k.startsWith('synapse-attente-')) localStorage.removeItem(k);
+  } catch {
+    /* pas grave */
+  }
+  location.replace('/');
+}
 
 function copy(text: string) {
   return navigator.clipboard.writeText(text).catch(() => {
@@ -210,6 +223,61 @@ function InviteFriend() {
   );
 }
 
+/**
+ * L'application Android : un QR code qui la télécharge (dernière version publiée sur GitHub). On l'installe, on
+ * se connecte avec son e-mail et son mot de passe, et tout est synchronisé en direct avec le PC.
+ */
+function AndroidApp() {
+  const depot = useSession((s) => s.server?.depot);
+  const [show, setShow] = useState(false);
+  if (isAndroidApp()) {
+    const v = android()?.version?.();
+    return (
+      <div className="flex flex-col gap-2 text-[12px] text-white/55 leading-relaxed">
+        <span>
+          Tu es dans l’application Android{v ? ` (version ${v})` : ''}. Tout ce que tu fais ici apparaît en direct sur ton PC, et l’inverse.
+        </span>
+        {depot && (
+          <button className="btn w-fit" onClick={() => openExternal(releasesUrl(depot))}>
+            Voir les nouvelles versions
+          </button>
+        )}
+      </div>
+    );
+  }
+  if (!depot) return null;
+  const url = androidDownloadUrl(depot);
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="text-[12px] text-white/50 leading-relaxed">
+        Installe l’application Synapse sur ton téléphone Android, puis connecte-toi avec ton e-mail et ton mot de passe : tu retrouves tout, et ce que tu fais sur l’un
+        apparaît aussitôt sur l’autre.
+      </div>
+      {!show ? (
+        <button className="btn btn-primary w-fit" style={cvar('#39ff88')} onClick={() => setShow(true)}>
+          ↓ Télécharger l’application Android
+        </button>
+      ) : (
+        <div className="flex gap-5 items-start flex-wrap anim-pop">
+          <QrCode text={url} size={168} label="QR code de téléchargement de l’application Android" />
+          <div className="flex-1 min-w-[220px] flex flex-col gap-2 text-[12.5px] text-white/65 leading-relaxed">
+            <span>1. Vise ce code avec l’appareil photo du téléphone, et touche le lien : le fichier « Synapse.apk » se télécharge.</span>
+            <span>2. Ouvre-le. Android demande d’autoriser l’installation (« sources inconnues ») : autorise ton navigateur, puis Installer.</span>
+            <span>3. Ouvre Synapse et connecte-toi avec ton compte.</span>
+            <span className="mono text-[10px] text-white/35 break-all">{url}</span>
+            <div className="flex gap-2 flex-wrap">
+              <CopyButton text={url} label="Copier le lien" />
+              <button className="btn btn-ghost !py-1 !px-2 !text-[9.5px]" onClick={() => openExternal(releasesUrl(depot))}>
+                Page GitHub
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Ouvrir son propre Synapse sur son téléphone : un QR code à viser, valable 10 minutes, une seule fois */
 function PhoneLink() {
   const [url, setUrl] = useState<string | null>(null);
@@ -226,13 +294,14 @@ function PhoneLink() {
       setError('Impossible pour l’instant. Réessaie.');
     }
   };
+  if (isAndroidApp()) return null;
   if (!url) {
     return (
       <div className="flex flex-col gap-3">
         <div className="text-[12px] text-white/50 leading-relaxed">
-          Retrouve ton cerveau sur ton téléphone, en direct avec ton ordinateur : un QR code à viser avec l’appareil photo, et tu es connecté. Rien à installer.
+          Sans installer l’application : un QR code à viser avec l’appareil photo, et ton cerveau s’ouvre dans le navigateur du téléphone, déjà connecté.
         </div>
-        <ReachButton label="Afficher le QR code" kind="any" lanChoice onReady={(base) => make(base)} />
+        <ReachButton label="Afficher le QR code de connexion" kind="any" lanChoice primary={false} onReady={(base) => make(base)} />
         {error && <div className="text-[12px] text-[rgb(var(--alert))]">{error}</div>}
       </div>
     );
@@ -252,7 +321,7 @@ function PhoneLink() {
               : 'Marche partout où cette adresse est joignable.'}{' '}
           Valable 10 minutes, une seule fois. Ne l’envoie à personne : il ouvre ton compte.
         </span>
-        <span className="text-white/40">Astuce : sur le téléphone, menu du navigateur → « Ajouter à l’écran d’accueil » pour l’ouvrir comme une appli.</span>
+        <span className="text-white/40">Mieux : l’application Android (ci-dessus), qui garde ta connexion même quand l’adresse du serveur change.</span>
         <span className="mono text-[10px] text-white/35 break-all" data-qr-url>
           {url}
         </span>
@@ -308,7 +377,7 @@ function Profile() {
         </label>
       </div>
       <div className="flex items-end gap-2 flex-wrap">
-        {account.hasPassword && !account.local && (
+        {account.hasPassword && (
           <label className="flex flex-col gap-1.5">
             <span className="xs-label">Mot de passe actuel</span>
             <input className="field !w-[190px]" type="password" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" />
@@ -322,10 +391,9 @@ function Profile() {
           Enregistrer
         </button>
       </div>
-      {account.local && !account.hasPassword && (
+      {!account.hasPassword && (
         <div className="text-[11.5px] text-white/40 leading-relaxed">
-          Sur ce PC, tu es reconnu automatiquement. Ajoute un e-mail et un mot de passe pour te connecter aussi depuis ton téléphone ou un autre ordinateur (par
-          l’adresse Internet).
+          Ajoute un e-mail et un mot de passe : ils servent à te reconnecter (après « Se déconnecter ») et à retrouver ton cerveau sur ton téléphone.
         </div>
       )}
       {msg && <div className={`text-[12px] ${msg.ok ? 'text-white/60' : 'text-[rgb(var(--alert))]'}`}>{msg.text}</div>}
@@ -342,18 +410,9 @@ function DangerZone() {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex gap-2 flex-wrap">
-        {!account.local && (
-          <button
-            className="btn"
-            onClick={() =>
-              void api('/api/auth/logout', {})
-                .catch(() => {})
-                .then(() => location.replace('/'))
-            }
-          >
-            Se déconnecter
-          </button>
-        )}
+        <button className="btn" data-logout onClick={() => void logout()}>
+          Se déconnecter
+        </button>
         <button
           className="btn btn-ghost"
           onClick={async () => {
@@ -375,7 +434,7 @@ function DangerZone() {
           </div>
           <div className="flex gap-2 flex-wrap">
             <input className="field !w-[150px] field-mono" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="SUPPRIMER" />
-            {account.hasPassword && !account.local && (
+            {account.hasPassword && (
               <input className="field !w-[190px]" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Ton mot de passe" />
             )}
             <button
@@ -438,8 +497,11 @@ export function AccountPanel() {
 
         {account && (
           <>
-            <Section title="Sur ton téléphone">
-              <PhoneLink />
+            <Section title={isAndroidApp() ? 'Application Android' : 'Sur ton téléphone'}>
+              <div className="flex flex-col gap-6">
+                <AndroidApp />
+                <PhoneLink />
+              </div>
             </Section>
             <Section title="Inviter un ami sur Synapse">
               <InviteFriend />

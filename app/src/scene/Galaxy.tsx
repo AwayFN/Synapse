@@ -31,10 +31,6 @@ interface Built {
   pointsGeo: THREE.BufferGeometry;
   webGeo: THREE.BufferGeometry;
   bundleGeo: THREE.BufferGeometry;
-  haloGeo: THREE.BufferGeometry;
-  haloPos: Float32Array;
-  haloSize: Float32Array;
-  haloInt: Float32Array;
   axonGeo: THREE.BufferGeometry;
   axonPos: Float32Array;
   axonCol: Float32Array;
@@ -148,23 +144,8 @@ function build(structure: Structure): Built {
   bundleGeo.setIndex(new THREE.BufferAttribute(new Uint32Array(bundle), 1));
   bundleGeo.boundingSphere = HUGE;
 
-  // soft halo around each nucleus
-  const haloPos = new Float32Array(nodes.length * 3);
-  const haloSize = new Float32Array(nodes.length);
-  const haloInt = new Float32Array(nodes.length);
-  const haloCol = new Float32Array(nodes.length * 3);
-  baseColor.forEach((c, i) => {
-    haloCol[i * 3] = c.r;
-    haloCol[i * 3 + 1] = c.g;
-    haloCol[i * 3 + 2] = c.b;
-  });
-  const haloGeo = new THREE.BufferGeometry();
-  haloGeo.setAttribute('position', new THREE.BufferAttribute(haloPos, 3).setUsage(THREE.DynamicDrawUsage));
-  haloGeo.setAttribute('aColor', new THREE.BufferAttribute(haloCol, 3));
-  haloGeo.setAttribute('aSize', new THREE.BufferAttribute(haloSize, 1).setUsage(THREE.DynamicDrawUsage));
-  haloGeo.setAttribute('aInt', new THREE.BufferAttribute(haloInt, 1).setUsage(THREE.DynamicDrawUsage));
-  haloGeo.setAttribute('aPhase', new THREE.BufferAttribute(new Float32Array(nodes.length).fill(0.1), 1));
-  haloGeo.boundingSphere = HUGE;
+  // (V6 : plus de halo flou autour des noyaux. Il formait une « aura » désagréable dès qu'on s'éloignait ;
+  // l'éclat néon vient des noyaux et des particules eux-mêmes)
 
   // axons: curved lines between nuclei, carrying the impulses
   const axonPos = new Float32Array(edges.length * SEG * 2 * 3);
@@ -202,10 +183,6 @@ function build(structure: Structure): Built {
     pointsGeo,
     webGeo,
     bundleGeo,
-    haloGeo,
-    haloPos,
-    haloSize,
-    haloInt,
     axonGeo,
     axonPos,
     axonCol,
@@ -227,7 +204,6 @@ export function Galaxy({ structure }: { structure: Structure }) {
   const mats = useMemo(
     () => ({
       points: makePointMaterial(1.15, 90),
-      halo: makePointMaterial(1, 420),
       pulses: makePointMaterial(1.1, 60),
       web: makeLineMaterial(0.3),
       bundle: makeLineMaterial(0.07),
@@ -248,7 +224,6 @@ export function Galaxy({ structure }: { structure: Structure }) {
       built.pointsGeo.dispose();
       built.webGeo.dispose();
       built.bundleGeo.dispose();
-      built.haloGeo.dispose();
       built.axonGeo.dispose();
     };
   }, [built, pulses]);
@@ -326,7 +301,7 @@ export function Galaxy({ structure }: { structure: Structure }) {
     // shader uniforms
     const cam = state.camera as THREE.PerspectiveCamera;
     const scale = (state.size.height * state.gl.getPixelRatio()) / (2 * Math.tan((cam.fov * Math.PI) / 360));
-    for (const mat of [mats.points, mats.halo, mats.pulses]) {
+    for (const mat of [mats.points, mats.pulses]) {
       mat.uniforms.uTime.value = t;
       mat.uniforms.uScale.value = scale;
     }
@@ -356,7 +331,7 @@ export function Galaxy({ structure }: { structure: Structure }) {
       if (ui.hiddenTypes.includes(node.type)) vis = 0;
       else {
         if (tagsOn) {
-          const ok = ent?.type === 'note' && ent.tags.some((tg) => ui.activeTags.includes(tg));
+          const ok = !!ent && Array.isArray(ent.tags) && ent.tags.some((tg) => ui.activeTags.includes(tg));
           if (!ok) vis = 0.09;
         }
         if (selId && selId !== node.id && !nc.set.has(node.id)) vis = Math.min(vis, 0.36);
@@ -418,12 +393,6 @@ export function Galaxy({ structure }: { structure: Structure }) {
       }
 
       const be = ease3(clamp01(birth));
-      b.haloPos[i * 3] = cx;
-      b.haloPos[i * 3 + 1] = cy;
-      b.haloPos[i * 3 + 2] = cz;
-      b.haloSize[i] = node.radius * (1.9 + node.hover * 0.9 + node.sel * 0.4 + node.flash * 2.4) * be;
-      b.haloInt[i] = (0.13 + node.hover * 0.12 + node.sel * 0.1 + node.flash * 0.55) * node.vis * be * (1 - node.done * 0.4);
-
       if (cores) {
         const r = CORE[node.type] * (1 + node.hover * 0.3 + node.sel * 0.15 + node.flash * 0.45) * be * (node.vis < 0.02 ? 0 : 1);
         tmpS.set(r, r, r);
@@ -562,10 +531,6 @@ export function Galaxy({ structure }: { structure: Structure }) {
     const pa = b.pointsGeo.attributes;
     pa.position.needsUpdate = true;
     pa.aInt.needsUpdate = true;
-    const ha = b.haloGeo.attributes;
-    ha.position.needsUpdate = true;
-    ha.aSize.needsUpdate = true;
-    ha.aInt.needsUpdate = true;
     const aa = b.axonGeo.attributes;
     aa.position.needsUpdate = true;
     aa.aColor.needsUpdate = true;
@@ -577,7 +542,6 @@ export function Galaxy({ structure }: { structure: Structure }) {
       <lineSegments geometry={built.bundleGeo} material={mats.bundle} frustumCulled={false} />
       <lineSegments geometry={built.webGeo} material={mats.web} frustumCulled={false} />
       <points geometry={built.pointsGeo} material={mats.points} frustumCulled={false} />
-      <points geometry={built.haloGeo} material={mats.halo} frustumCulled={false} />
       <points geometry={pulses.geo} material={mats.pulses} frustumCulled={false} />
       <instancedMesh
         key={built.n}

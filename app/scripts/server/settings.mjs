@@ -16,9 +16,10 @@ export const DEFAULT_TERMS = `Synapse est proposé par {createur}, à titre pers
 • Pour toute question sur tes données, écris à {createur}.`;
 
 const DEFAULTS = {
-  v: 4,
+  v: 6,
   appName: 'Synapse',
-  registration: 'invitation',
+  /** V6 : quiconque installe Synapse (PC ou téléphone) crée son compte tout seul */
+  registration: 'ouverte',
   brainInvitesAllowSignup: true,
   membersCanInvite: true,
   memberInviteQuota: 5,
@@ -36,6 +37,13 @@ const DEFAULTS = {
   netUrl: '',
   netUrlPrev: '',
   netUrlAt: 0,
+  /**
+   * V6 : sur ce PC, le compte était reconnu sans mot de passe. Au premier démarrage de la V6, une session lui est
+   * ouverte une seule fois (rien à retaper) ; ensuite, comme partout : « Se déconnecter » demande de se reconnecter.
+   */
+  localGrant: false,
+  /** adresse publiée sur GitHub pour les applications (null : automatique, sur le PC qui a le dépôt officiel) */
+  publication: { on: null, url: '', at: 0, error: '', tried: 0 },
 };
 
 const int = (v, min, max, d) => {
@@ -71,9 +79,20 @@ export class Settings {
       maintenance: { ...DEFAULTS.maintenance, ...(d.maintenance || {}) },
       announcement: { ...DEFAULTS.announcement, ...(d.announcement || {}) },
       share: { ...DEFAULTS.share, ...(d.share || {}) },
+      publication: { ...DEFAULTS.publication, ...(d.publication || {}) },
     };
-    if (!REGISTRATION.includes(this.d.registration)) this.d.registration = 'invitation';
+    if (!REGISTRATION.includes(this.d.registration)) this.d.registration = 'ouverte';
     this.timer = null;
+    // V5 → V6 : quiconque installe l'application crée son compte lui-même ; « sur invitation » (l'ancien réglage
+    // par défaut) l'en empêcherait. L'admin peut toujours revenir à « sur invitation » dans l'espace admin.
+    if (d.v !== undefined && Number(d.v) < 6) {
+      if (this.d.registration === 'invitation') {
+        this.d.registration = 'ouverte';
+        log('V6 : inscriptions ouvertes (les nouvelles installations créent leur compte)');
+      }
+      this.d.v = 6;
+      this.save();
+    }
   }
   save() {
     if (this.timer) return;
@@ -91,7 +110,7 @@ export class Settings {
 
   /** Ce que l'espace créateur affiche (le jeton du tunnel ne repart jamais vers un navigateur) */
   public() {
-    const { tunnelToken, share, legacyBrain, v, netUrl, netUrlPrev, netUrlAt, ...rest } = this.d;
+    const { tunnelToken, share, legacyBrain, v, netUrl, netUrlPrev, netUrlAt, localGrant, publication, ...rest } = this.d;
     return { ...rest, tunnelTokenSet: !!tunnelToken, defaultTerms: DEFAULT_TERMS };
   }
 
@@ -126,6 +145,18 @@ export class Settings {
     if (p.netUrl !== undefined) put('netUrl', cleanUrl(p.netUrl));
     if (p.netUrlPrev !== undefined) put('netUrlPrev', cleanUrl(p.netUrlPrev));
     if (p.netUrlAt !== undefined) put('netUrlAt', int(p.netUrlAt, 0, 8.64e15, 0));
+    if (p.localGrant !== undefined) put('localGrant', !!p.localGrant);
+    if (p.publication !== undefined) {
+      const cur = d.publication;
+      const x = p.publication;
+      put('publication', {
+        on: x.on === undefined ? cur.on : x.on === null ? null : !!x.on,
+        url: x.url === undefined ? cur.url : cleanUrl(x.url),
+        at: x.at === undefined ? cur.at : int(x.at, 0, 8.64e15, 0),
+        error: x.error === undefined ? cur.error : text(x.error, 300),
+        tried: x.tried === undefined ? cur.tried : int(x.tried, 0, 8.64e15, 0),
+      });
+    }
     if (changed.length) this.save();
     return changed;
   }

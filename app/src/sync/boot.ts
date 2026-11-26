@@ -2,17 +2,20 @@ import { useData } from '../store/data';
 import { setMemoryOnly } from '../store/storage';
 import { api, setBrain, startSync } from './client';
 import { installErrorReporter } from './errors';
+import { android } from './native';
 import { useSession, type Account, type BrainCard, type Role, type Scope, type ServerInfo } from './session';
 
 /**
  * Au démarrage : qui suis-je pour ce serveur, et quel cerveau ouvrir ?
  *   - pas de serveur Synapse (développement) → application locale, comme avant
+ *   - serveur injoignable (Synapse central éteint, réseau coupé) → écran d'attente, nouvel essai automatique
  *   - lien d'installation, de nouveau mot de passe, d'invitation à Synapse ou à un cerveau → l'écran qui va avec
- *   - compte connecté (ou créateur sur son PC) → son cerveau, ou celui demandé (?cerveau=…) s'il y a accès
+ *   - compte connecté → son cerveau, ou celui demandé (?cerveau=…) s'il y a accès
  *   - invité sans compte (cookie) → le cerveau qu'il a rejoint
- *   - sinon → se connecter / créer un compte
+ *   - sinon → créer son compte / se connecter (la toute première chose à faire)
  * Avec un serveur, rien n'est gardé dans le navigateur : le cerveau vit sur le serveur.
  */
+export const PROTO = 6;
 export interface InviteInfo {
   ok: boolean;
   reason?: 'unknown' | 'expired' | 'used' | 'revoked';
@@ -60,6 +63,8 @@ export type Boot =
   | { kind: 'auth'; hello: Hello; code?: string; codeInfo?: SignupInfo; linkError?: boolean }
   | { kind: 'setup'; hello: Hello; token: string | null }
   | { kind: 'first'; hello: Hello }
+  | { kind: 'claim'; hello: Hello }
+  | { kind: 'unreachable'; reason: 'server' | 'version' | 'old-server' }
   | { kind: 'reset'; hello: Hello; token: string; info: { ok: boolean; name?: string; email?: string } }
   | { kind: 'maintenance'; hello: Hello }
   | { kind: 'suspended'; hello: Hello }
@@ -73,14 +78,29 @@ function localLayout(): Record<string, [number, number, number]> {
   }
 }
 
-async function hello(brain: string | null): Promise<Hello | null> {
+/** null : pas de serveur Synapse ici · 'old' / 'new' : un serveur plus ancien / plus récent · sinon sa réponse */
+async function hello(brain: string | null): Promise<Hello | null | 'old' | 'new'> {
   try {
-    const r = await fetch(`/api/hello${brain ? `?b=${encodeURIComponent(brain)}` : ''}`, { credentials: 'same-origin', cache: 'no-store' });
+    const ctrl = new AbortController();
+    const t = window.setTimeout(() => ctrl.abort(), 15000);
+    const r = await fetch(`/api/hello${brain ? `?b=${encodeURIComponent(brain)}` : ''}`, { credentials: 'same-origin', cache: 'no-store', signal: ctrl.signal });
+    window.clearTimeout(t);
     if (!r.ok || !String(r.headers.get('content-type')).includes('json')) return null;
     const h = (await r.json()) as Hello;
-    return h.app === 'synapse' && h.proto === 5 ? h : null;
+    if (h.app !== 'synapse') return null;
+    return h.proto === PROTO ? h : h.proto < PROTO ? 'old' : 'new';
   } catch {
     return null;
+  }
+}
+
+/** Le relais de ce PC (mode client) répond-il ? Alors c'est le Synapse central qui ne répond pas */
+async function relayMode(): Promise<boolean> {
+  try {
+    const r = await fetch('/__relais', { cache: 'no-store' });
+    return r.ok && ((await r.json()) as { mode?: string }).mode === 'client';
+  } catch {
+    return false;
   }
 }
 
@@ -116,8 +136,22 @@ export async function bootstrap(): Promise<Boot> {
     history.replaceState(null, '', '/');
   }
 
-  let h = await hello(want);
-  if (!h) return { kind: 'app' };
+  const first = await hello(want);
+  // un serveur plus ancien (le PC n'a pas encore relancé Synapse) ou plus récent (la page doit se recharger)
+  if (first === 'old') return { kind: 'unreachable', reason: 'old-server' };
+  if (first === 'new') return { kind: 'unreachable', reason: 'version' };
+  if (!first) {
+    // en développement (pas de serveur Synapse) : l'application fonctionne seule, dans ce navigateur.
+    // Servie par Synapse, jamais : sans serveur, rien ne serait enregistré au bon endroit
+    if (import.meta.env.DEV && !android() && !(await relayMode())) return { kind: 'app' };
+    try {
+      android()?.unreachable?.();
+    } catch {
+      /* pas dans l'application */
+    }
+    return { kind: 'unreachable', reason: 'server' };
+  }
+  let h: Hello = first;
   installErrorReporter(h.build);
   // avec un serveur, le cerveau vit sur le serveur : rien n'est écrit dans ce navigateur
   setMemoryOnly(true);
@@ -137,6 +171,8 @@ export async function bootstrap(): Promise<Boot> {
   }
   // nouvelle installation : la personne devant ce PC crée d'abord son compte (un compte normal, pas admin)
   if (h.server.firstRun && !invite) return { kind: 'first', hello: h };
+  // l'ancien compte de ce PC n'a pas de mot de passe : il en choisit un, une fois
+  if (h.server.claim && !invite) return { kind: 'claim', hello: h };
   if (h.suspended) return { kind: 'suspended', hello: h };
   if (h.server.maintenance !== null && !h.account?.staff) return { kind: 'maintenance', hello: h };
 
@@ -163,7 +199,8 @@ export async function bootstrap(): Promise<Boot> {
   // un compte connecté qui demande un cerveau où il n'a pas (ou plus) accès : retour au sien
   if (want && h.auth === 'none' && h.account) {
     history.replaceState(null, '', '/');
-    h = (await hello(null)) ?? h;
+    const again = await hello(null);
+    if (again && again !== 'old' && again !== 'new') h = again;
   }
   if (h.auth === 'none') return { kind: 'auth', hello: h, linkError };
 

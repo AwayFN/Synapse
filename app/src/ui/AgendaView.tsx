@@ -3,12 +3,13 @@ import { useShallow } from 'zustand/react/shallow';
 import { displayTitle, useData } from '../store/data';
 import { useUI } from '../store/ui';
 import { addDays, DAY_SHORT, fmtHM, fmtTime, fromISODate, MONTH_NAMES, minutesNow, mondayOf, slotDuration, todayISO } from '../lib/time';
-import type { Project, Slot, Task } from '../types';
+import { tagsOf, type Project, type Slot, type Task } from '../types';
 import { Corners, cvar, Kbd } from './common';
-import { AutoTextarea, LinksSection, ProjectSelect, Section } from './fields';
+import { BodyPreview, LinksSection, ProjectSelect, Section, TagEditor } from './fields';
 import { TimeInput } from './TimeInput';
 import { DeleteButton } from './DetailPanel';
 import { useCanWrite, useEditLock } from '../sync/lock';
+import { LEVEL, useBackLayer } from '../lib/back';
 
 /**
  * Emploi du temps : une semaine en grille, les heures à gauche, un jour par colonne (comme un relevé d'heures).
@@ -151,12 +152,13 @@ function SlotPanel({ s, onClose }: { s: Slot; onClose: () => void }) {
             </div>
           </Section>
           <Section label="Description">
-            <div onFocus={lock.claim}>
-              <AutoTextarea value={s.description} onChange={(v) => update(s.id, { description: v })} placeholder="Ce que tu fais pendant ce créneau…" />
-            </div>
+            <BodyPreview e={s} placeholder="Ce que tu fais pendant ce créneau…" readOnly={ro} />
+          </Section>
+          <Section label="Tags">
+            {ro ? <span className="mono text-[11px] text-white/55">{tagsOf(s).length ? tagsOf(s).map((t) => `#${t}`).join('  ') : '—'}</span> : <TagEditor id={s.id} tags={tagsOf(s)} />}
           </Section>
         </fieldset>
-        <LinksSection id={s.id} />
+        <LinksSection id={s.id} readOnly={ro} pickerLevel={LEVEL.inView + 1} />
         <div className="mt-7 pt-4 border-t border-white/[0.07] flex items-center justify-between gap-3 flex-wrap">
           <button className="btn" onClick={() => openEntity(s.id)}>
             Voir dans le réseau
@@ -226,23 +228,13 @@ function Week() {
       const d = useData.getState();
       const s = d.entities[id] as Slot | undefined;
       const linked = d.links.some((l) => l.a === id || l.b === id);
-      if (s && !s.title.trim() && !s.description.trim() && !s.projectId && !linked) d.remove(id, { silent: true });
+      if (s && !s.title.trim() && !s.description.trim() && !s.projectId && !tagsOf(s).length && !linked) d.remove(id, { silent: true });
     }
     fresh.current = null;
   };
 
-  // Échap : d'abord le panneau, puis la vue ; Suppr : supprime le créneau ouvert
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement as HTMLElement | null)?.tagName ?? '');
-      if (e.key === 'Escape' && sel && !typing && !useUI.getState().paletteOpen) {
-        e.stopPropagation();
-        close();
-      }
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  });
+  // Échap (ou retour sur le téléphone) : d'abord le panneau du créneau, puis la vue (voir lib/back.ts)
+  useBackLayer(!!sel, close, LEVEL.inView);
 
   /** Position du pointeur dans la grille → jour (0..6) et minute */
   const at = (e: { clientX: number; clientY: number }) => {

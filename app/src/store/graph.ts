@@ -1,4 +1,4 @@
-import { hasProject, type Entity, type Link, type Slot, type Task } from '../types';
+import { hasProject, type Entity, type Link, type Note, type Slot, type Task } from '../types';
 
 export type EdgeKind = 'parent' | 'link';
 
@@ -9,7 +9,7 @@ export interface Edge {
   kind: EdgeKind;
 }
 
-/** All visible relations: explicit links + task / slot → parent project */
+/** All visible relations: explicit links + task / slot / note → parent project */
 export function computeEdges(entities: Record<string, Entity>, links: Link[]): Edge[] {
   const out: Edge[] = [];
   const seen = new Set<string>();
@@ -64,6 +64,13 @@ export function projectTasks(entities: Record<string, Entity>, projectId: string
   return Object.values(entities)
     .filter((e): e is Task => e.type === 'task' && e.projectId === projectId)
     .sort((a, b) => a.order - b.order);
+}
+
+/** Les notes d'un projet (les plus récemment modifiées d'abord) */
+export function projectNotes(entities: Record<string, Entity>, projectId: string): Note[] {
+  return Object.values(entities)
+    .filter((e): e is Note => e.type === 'note' && e.projectId === projectId)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 /** Les créneaux de l'emploi du temps consacrés à un projet (les plus récents d'abord) */
