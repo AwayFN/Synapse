@@ -74,6 +74,15 @@ jobs:
           cp android/app/build/outputs/apk/release/app-release.apk Synapse.apk
           ls -la Synapse.apk
 
+      # V7 : l'application contient Synapse lui-même ; sans ses pages, elle s'ouvrirait sur un écran vide
+      - name: Vérifier que Synapse est dans l'APK
+        run: |
+          unzip -l Synapse.apk | grep -E "assets/web/" | head -20
+          unzip -l Synapse.apk | grep -q "assets/web/index.html"
+          unzip -l Synapse.apk | grep -qE "assets/web/assets/index-[A-Za-z0-9_-]+\.js"
+          WANT=$(grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' app/dist/index.html)
+          unzip -l Synapse.apk | grep -q "assets/web/$WANT"
+
       - uses: actions/upload-artifact@v4
         with:
           name: Synapse-${{ steps.v.outputs.name }}
