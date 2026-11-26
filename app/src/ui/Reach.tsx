@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useSession } from '../sync/session';
-import { canNativeShare, ensureReach, linkFrom, nativeShare, openLink, reachNow, toolReady, type Base, type ReachKind } from '../sync/reach';
+import { api } from '../sync/client';
+import { standalone } from '../sync/remote';
+import { canNativeShare, ensureReach, inviteTokenOf, linkFrom, nativeShare, openLink, reachNow, toolReady, type Base, type ReachKind } from '../sync/reach';
 
 /**
  * Un bouton qui s'occupe de tout : s'il n'existe encore aucune adresse où les autres peuvent te joindre,
@@ -100,27 +102,59 @@ export function ShareSheetButton({ text }: { text: string }) {
   );
 }
 
+/**
+ * Application Android : une invitation à un cerveau de ce Synapse central s'ouvre ici, avec son compte (le jeton est
+ * vérifié auprès du serveur, même si son adresse a changé depuis l'envoi du lien) ; sinon, dans le navigateur.
+ */
+async function joinInApp(url: URL): Promise<string | null> {
+  const token = inviteTokenOf(url);
+  if (!token) {
+    openLink(url);
+    return null;
+  }
+  try {
+    const info = await api<{ ok: boolean; reason?: string }>('/api/invite/info', { token });
+    if (!info.ok && info.reason === 'unknown') {
+      // une invitation d'un autre serveur Synapse : dans le navigateur du téléphone
+      openLink(url);
+      return null;
+    }
+  } catch {
+    return 'Le Synapse central ne répond pas pour l’instant : réessaie quand le téléphone a du réseau.';
+  }
+  history.replaceState(null, '', `/#invite=${encodeURIComponent(token)}`);
+  location.reload();
+  return null;
+}
+
 /** Rejoindre le Synapse d'un ami : coller le lien (ou le message entier) qu'il a envoyé */
 export function JoinFriend({ hint = true }: { hint?: boolean }) {
   const [text, setText] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const inApp = standalone();
   const link = linkFrom(text);
   const bad = text.trim().length > 0 && !link;
   return (
     <div className="flex flex-col gap-2">
       {hint && (
         <div className="text-[12px] text-white/50 leading-relaxed">
-          Un ami utilise Synapse ? Il t’envoie son lien d’invitation (il commence par https://). Ouvre-le, ou colle-le ici : son cerveau s’ouvre dans une nouvelle
-          fenêtre, le tien reste ouvert.
+          {inApp
+            ? 'Un ami t’a envoyé un lien d’invitation dans son cerveau ? Colle-le ici (ou tout le message qui le contient) : tu le rejoins avec ton compte, et tu le retrouves ensuite dans « Mes cerveaux ».'
+            : 'Un ami utilise Synapse ? Il t’envoie son lien d’invitation (il commence par https://). Ouvre-le, ou colle-le ici : son cerveau s’ouvre dans une nouvelle fenêtre, le tien reste ouvert.'}
         </div>
       )}
       <form
         className="flex gap-2"
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
-          if (link && !link.problem) {
-            openLink(link.url);
-            setText('');
+          setError(null);
+          if (!link || link.problem) return;
+          if (inApp) {
+            setError(await joinInApp(link.url));
+            return;
           }
+          openLink(link.url);
+          setText('');
         }}
       >
         <input
@@ -136,6 +170,7 @@ export function JoinFriend({ hint = true }: { hint?: boolean }) {
       </form>
       {bad && <div className="text-[11.5px] text-[rgb(var(--alert))]">Ce n’est pas un lien : il doit commencer par https:// (ou http://).</div>}
       {link?.problem && <div className="text-[11.5px] text-[rgb(var(--alert))] leading-relaxed">{link.problem}</div>}
+      {error && <div className="text-[11.5px] text-[rgb(var(--alert))] leading-relaxed">{error}</div>}
     </div>
   );
 }

@@ -10,15 +10,17 @@ import { cvar, Kbd } from './common';
 import { TagBar } from './TagBar';
 import { PresenceBar } from './Presence';
 import { AccountChip } from './Account';
+import { PendingChip } from './Pending';
 import { deName, ROLE_LABEL, useSession } from '../sync/session';
 import { useCan } from '../sync/perm';
+import { fx } from '../store/fx';
 
 /** Sous le nom : « réseau personnel », ou chez qui l'on est et ce qu'on peut y faire */
 function Subtitle() {
   const mode = useSession((s) => s.mode);
   const role = useSession((s) => s.role);
   const ownerName = useSession((s) => s.ownerName);
-  const text = mode === 'local' || role === 'owner' ? 'réseau personnel · v6' : `cerveau ${deName(ownerName || 'ton hôte')} · invité · ${ROLE_LABEL[role]}`;
+  const text = mode === 'local' || role === 'owner' ? 'réseau personnel · v7' : `cerveau ${deName(ownerName || 'ton hôte')} · invité · ${ROLE_LABEL[role]}`;
   return <div className="hud text-[9px] text-white/35 mt-1.5 ml-5 max-w-[320px] truncate">{text}</div>;
 }
 
@@ -240,9 +242,41 @@ function Hints() {
       <span><Kbd>Molette</Kbd> avancer</span>
       <span><Kbd>Clic droit</Kbd> pivoter</span>
       <span><Kbd>ZQSD</Kbd> voler</span>
-      <span><Kbd>H</Kbd> vue d'ensemble</span>
+      <span><Kbd>H</Kbd> revenir aux neurones</span>
       <span><Kbd>?</Kbd> aide</span>
     </div>
+  );
+}
+
+/**
+ * Revenir aux neurones : un petit bouton discret à côté de « Créer · chercher ». Il s'allume quand on s'est
+ * éloigné du réseau ; un appui ramène devant les neurones presque instantanément, même de très loin.
+ */
+function HomeButton() {
+  const [far, setFar] = useState(false);
+  useEffect(() => {
+    const id = window.setInterval(() => setFar(telemetry.far), 300);
+    return () => window.clearInterval(id);
+  }, []);
+  return (
+    <button
+      data-ui
+      data-home
+      data-far={far ? '1' : '0'}
+      onClick={() => fx.emit({ kind: 'home' })}
+      title="Revenir aux neurones (touche H)"
+      aria-label="Revenir aux neurones"
+      className={`glass pointer-events-auto w-9 h-9 max-md:w-10 max-md:h-10 flex items-center justify-center transition-colors duration-500 ${
+        far ? 'neon text-[#00e5ff] breathe' : 'text-white/40 hover:text-white'
+      }`}
+      style={cvar('#00e5ff')}
+    >
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden>
+        <circle cx="12" cy="12" r="6.5" />
+        <circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none" />
+        <path d="M12 1.8v3.4M12 18.8v3.4M1.8 12h3.4M18.8 12h3.4" />
+      </svg>
+    </button>
   );
 }
 
@@ -293,6 +327,7 @@ export function Hud() {
       >
         <div className="flex flex-col items-end gap-2.5">
           <AccountChip />
+          <PendingChip />
           <div className="max-md:hidden">
             <NowWidget />
           </div>
@@ -316,18 +351,24 @@ export function Hud() {
           panelOpen ? 'max-md:opacity-0 max-md:pointer-events-none' : ''
         }`}
       >
-        <button
-          data-ui
-          onClick={() => openPalette()}
-          className="glass neon pointer-events-auto flex items-center gap-3 px-4 py-2 max-md:py-2.5 hud text-[10.5px] text-white/70 hover:text-white transition-colors"
-          style={cvar('#ff2e88')}
-        >
-          <span className="text-[#ff2e88] text-sm leading-none">{can.write() ? '+' : '⌕'}</span>
-          {can.write() ? 'Créer · chercher' : 'Chercher'}
-          <span className="max-md:hidden">
-            <Kbd>Ctrl K</Kbd>
-          </span>
-        </button>
+        <div className="relative">
+          <button
+            data-ui
+            onClick={() => openPalette()}
+            className="glass neon pointer-events-auto flex items-center gap-3 px-4 py-2 max-md:py-2.5 hud text-[10.5px] text-white/70 hover:text-white transition-colors"
+            style={cvar('#ff2e88')}
+          >
+            <span className="text-[#ff2e88] text-sm leading-none">{can.write() ? '+' : '⌕'}</span>
+            {can.write() ? 'Créer · chercher' : 'Chercher'}
+            <span className="max-md:hidden">
+              <Kbd>Ctrl K</Kbd>
+            </span>
+          </button>
+          {/* à côté, sans décentrer « Créer · chercher » */}
+          <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2">
+            <HomeButton />
+          </div>
+        </div>
         <div className="max-md:hidden">
           <Hints />
         </div>

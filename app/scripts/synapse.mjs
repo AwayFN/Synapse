@@ -31,7 +31,7 @@ import { fileURLToPath } from 'node:url';
 
 const PORT = Number(process.env.SYNAPSE_PORT) || 5173;
 /** version of the server API (the launcher replaces an older running server) */
-const PROTO = 6;
+const PROTO = 7;
 const APP_URL = `http://localhost:${PORT}/`;
 const SELF = fileURLToPath(import.meta.url);
 const APP_DIR = path.resolve(path.dirname(SELF), '..');

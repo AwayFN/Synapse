@@ -2,6 +2,8 @@
  * Les erreurs de l'application remontent à l'espace créateur (message technique et pile d'appels,
  * jamais le contenu du cerveau), pour que le créateur puisse corriger ce qui casse chez les autres.
  */
+import { apiBase, apiUrl, requestInit, standalone } from './remote';
+
 let installed = false;
 let sent = 0;
 let build = '';
@@ -19,11 +21,12 @@ function report(message: string, stack: string, version: string) {
   if (seen.has(key) || sent >= 20) return;
   seen.add(key);
   sent++;
-  void fetch('/api/errors', {
+  // application Android hors ligne (Synapse central inconnu) : rien à envoyer
+  if (standalone() && !apiBase()) return;
+  void fetch(apiUrl('/api/errors'), {
     method: 'POST',
-    headers: { 'X-Synapse': '1', 'Content-Type': 'application/json' },
+    ...requestInit({ 'X-Synapse': '1', 'Content-Type': 'application/json' }),
     body: JSON.stringify({ message: message.slice(0, 400), stack: stack.slice(0, 3000), where: location.pathname, version }),
-    credentials: 'same-origin',
     keepalive: true,
   }).catch(() => {});
 }

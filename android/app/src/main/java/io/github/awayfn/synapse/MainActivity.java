@@ -3,11 +3,12 @@ package io.github.awayfn.synapse;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.net.ConnectivityManager;
 import android.net.Network;
@@ -20,11 +21,9 @@ import android.os.Looper;
 import android.provider.MediaStore;
 import android.view.View;
 import android.view.WindowManager;
-import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
-import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -34,45 +33,46 @@ import android.widget.Toast;
 
 import org.json.JSONObject;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Synapse pour Android : l'application ouvre le Synapse central (le même que sur le PC) dans une vue web.
- * On s'y crée un compte (ou on s'y connecte) une fois ; on reste connecté jusqu'à « Se déconnecter ».
- * Tout ce qu'on fait ici apparaît en direct sur le PC, et l'inverse.
+ * Synapse pour Android (V7) : Synapse est DANS l'application. Il s'ouvre et marche sur le téléphone, même sans réseau
+ * et même quand le PC qui héberge le Synapse central est éteint : le cerveau est gardé sur le téléphone.
+ * On s'y crée un compte au premier lancement (même sans réseau : il est enregistré dès que possible) ; tout se
+ * synchronise avec le Synapse central dès qu'il répond, et on retrouve tout sur son PC avec le même compte.
  *
- *  - L'adresse du serveur peut changer : l'application la retrouve sur GitHub (Central.java) et garde la session
- *    (le cookie de session est recopié pour la nouvelle adresse) : pas besoin de se reconnecter.
- *  - Le réseau du téléphone change (Wi-Fi ↔ 4G/5G) : la page est prévenue et se rebranche aussitôt.
+ *  - Les pages de Synapse (app/dist, copiées dans l'APK) sont servies depuis l'application elle-même, à l'adresse
+ *    réservée https://appassets.androidplatform.net (jamais demandée sur Internet) : la copie du cerveau garde la même
+ *    adresse, même quand celle du Synapse central change.
+ *  - Le Synapse central est trouvé par la page elle-même (dernière adresse, ou celle publiée sur GitHub).
+ *  - Le réseau du téléphone change (Wi-Fi ↔ 4G/5G) : la page est prévenue et se resynchronise aussitôt.
  *  - Le bouton retour fait comme la touche Échap (ferme ce qui est ouvert) ; s'il n'y a plus rien à fermer,
  *    l'application passe en arrière-plan.
  */
 public class MainActivity extends Activity {
-    private static final String LOCAL_PAGE = "file:///android_asset/connexion.html";
-    private static final String SESSION_COOKIE = "synapse_a";
+    static final String APP_HOST = "appassets.androidplatform.net";
+    private static final String APP_URL = "https://" + APP_HOST + "/";
+    private static final String WEB = "web";
     private static final int FILE_REQUEST = 41;
-    private static final long RETRY_MS = 8000;
+    /** Les pages de Synapse ne parlent qu'à elles-mêmes, au Synapse central et à GitHub (son adresse) */
+    private static final String CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+            + "font-src 'self' data:; connect-src 'self' https: http:; worker-src 'self' blob:; base-uri 'self'; form-action 'self'";
 
     private WebView web;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private ConnectivityManager.NetworkCallback netCallback;
     private ValueCallback<Uri[]> fileCallback;
-
-    /** l'adresse du Synapse central ouverte en ce moment (https://…), ou null */
-    private volatile String server;
-    /** la page locale (démarrage, serveur injoignable) est affichée */
-    private volatile boolean onLocalPage = true;
-    private volatile boolean resolving = false;
-    private volatile String lastError = "";
-    private long lastResolve = 0;
     private long lastUpdateCheck = 0;
-    private final Runnable retry = this::resolveAndOpen;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -88,6 +88,7 @@ public class MainActivity extends Activity {
 
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
+        // le cerveau gardé sur le téléphone (la page l'écrit dans son stockage local)
         s.setDomStorageEnabled(true);
         s.setDatabaseEnabled(true);
         s.setMediaPlaybackRequiresUserGesture(true);
@@ -99,113 +100,26 @@ public class MainActivity extends Activity {
         s.setTextZoom(100);
         s.setAllowFileAccess(false);
         s.setAllowContentAccess(false);
-        s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        // un serveur Synapse sur le même Wi-Fi a une adresse en http (ex. http://192.168.1.20:5173)
+        s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         // le serveur reconnaît l'application (et l'espace admin la compte comme « application Android »)
         s.setUserAgentString(s.getUserAgentString() + " SynapseAndroid/" + BuildConfig.VERSION_NAME);
-
-        CookieManager cookies = CookieManager.getInstance();
-        cookies.setAcceptCookie(true);
-        cookies.setAcceptThirdPartyCookies(web, false);
 
         web.addJavascriptInterface(new Bridge(), "SynapseAndroid");
         web.setWebViewClient(new Client());
         web.setWebChromeClient(new Chrome());
         web.setDownloadListener((url, userAgent, contentDisposition, mimetype, contentLength) -> openExternal(url));
 
-        // la page de connexion vient de l'application elle-même (file:///android_asset, toujours permis)
-        showLocal("demarrage");
-        resolveAndOpen();
+        if (state != null) web.restoreState(state);
+        if (web.getUrl() == null) web.loadUrl(APP_URL);
         watchNetwork();
     }
 
-    // ───────────────────────── trouver et ouvrir le Synapse central
-
-    private void showLocal(String state) {
-        onLocalPage = true;
-        web.loadUrl(LOCAL_PAGE + "#" + state);
-    }
-
-    /** Cherche le serveur (hors du fil principal), puis l'ouvre ; sinon la page « injoignable », et on réessaie */
-    private void resolveAndOpen() {
-        ui.removeCallbacks(retry);
-        if (resolving) return;
-        resolving = true;
-        lastResolve = System.currentTimeMillis();
-        io.execute(() -> {
-            String found = Central.resolve(getApplicationContext());
-            ui.post(() -> {
-                resolving = false;
-                if (isFinishing()) return;
-                if (found != null) {
-                    lastError = "";
-                    open(found);
-                } else {
-                    lastError = "Le Synapse central ne répond pas pour l’instant : l’ordinateur qui l’héberge est peut-être éteint, ou le téléphone n’a pas de réseau.";
-                    if (onLocalPage) {
-                        web.evaluateJavascript("window.etat && window.etat('hors-ligne')", null);
-                        ui.postDelayed(retry, RETRY_MS);
-                    } else {
-                        // la page de Synapse est ouverte : elle se reconnecte toute seule si le serveur revient
-                        ui.postDelayed(retry, RETRY_MS * 2);
-                    }
-                }
-            });
-        });
-    }
-
-    /** Ouvre le Synapse central à cette adresse, en gardant la session (même si l'adresse a changé) */
-    private void open(String base) {
-        boolean sameServer = base.equals(server) && !onLocalPage;
-        if (sameServer) return;
-        carrySession(base);
-        server = base;
-        onLocalPage = false;
-        web.loadUrl(base + "/");
-    }
-
-    /** La session (cookie) suit le compte d'une adresse à l'autre : pas besoin de se reconnecter */
-    private void carrySession(String base) {
-        SharedPreferences p = Central.prefs(this);
-        String token = p.getString(Central.KEY_TOKEN, null);
-        if (token == null) return;
-        Uri u = Uri.parse(base);
-        String host = u.getHost();
-        if (host == null) return;
-        String existing = readSession(base);
-        if (token.equals(existing)) return;
-        boolean https = "https".equalsIgnoreCase(u.getScheme());
-        CookieManager.getInstance().setCookie(base, SESSION_COOKIE + "=" + token + "; Path=/; Max-Age=34560000; HttpOnly; SameSite=Strict" + (https ? "; Secure" : ""));
-        CookieManager.getInstance().flush();
-    }
-
-    private static String readSession(String url) {
-        String all = CookieManager.getInstance().getCookie(url);
-        if (all == null) return null;
-        for (String part : all.split(";")) {
-            String c = part.trim();
-            if (c.startsWith(SESSION_COOKIE + "=")) return c.substring(SESSION_COOKIE.length() + 1);
-        }
-        return null;
-    }
-
-    /** Après chaque page du serveur : on retient la session (ou on l'oublie après « Se déconnecter ») */
-    private void rememberSession(String url) {
-        String base = server;
-        if (base == null || url == null || !url.startsWith(base)) return;
-        String token = readSession(base);
-        SharedPreferences.Editor e = Central.prefs(this).edit();
-        if (token != null && !token.isEmpty()) e.putString(Central.KEY_TOKEN, token).putString(Central.KEY_TOKEN_HOST, Uri.parse(base).getHost());
-        else e.remove(Central.KEY_TOKEN).remove(Central.KEY_TOKEN_HOST);
-        e.apply();
-        CookieManager.getInstance().flush();
-    }
-
-    private boolean isServerUrl(Uri u) {
-        String base = server;
-        if (base == null || u == null) return false;
-        Uri b = Uri.parse(base);
-        return u.getHost() != null && u.getHost().equalsIgnoreCase(b.getHost()) && u.getPort() == b.getPort() && String.valueOf(u.getScheme()).equalsIgnoreCase(b.getScheme());
+    @Override
+    protected void onSaveInstanceState(Bundle out) {
+        super.onSaveInstanceState(out);
+        web.saveState(out);
     }
 
     private void openExternal(String url) {
@@ -216,6 +130,62 @@ public class MainActivity extends Activity {
         } catch (ActivityNotFoundException e) {
             Toast.makeText(this, "Aucune application pour ouvrir ce lien", Toast.LENGTH_SHORT).show();
         }
+    }
+
+    // ───────────────────────── les pages de Synapse, depuis l'APK
+
+    private static String mimeOf(String path) {
+        String p = path.toLowerCase();
+        if (p.endsWith(".html")) return "text/html";
+        if (p.endsWith(".js") || p.endsWith(".mjs")) return "text/javascript";
+        if (p.endsWith(".css")) return "text/css";
+        if (p.endsWith(".json")) return "application/json";
+        if (p.endsWith(".webmanifest")) return "application/manifest+json";
+        if (p.endsWith(".svg")) return "image/svg+xml";
+        if (p.endsWith(".png")) return "image/png";
+        if (p.endsWith(".jpg") || p.endsWith(".jpeg")) return "image/jpeg";
+        if (p.endsWith(".webp")) return "image/webp";
+        if (p.endsWith(".ico")) return "image/x-icon";
+        if (p.endsWith(".woff2")) return "font/woff2";
+        if (p.endsWith(".woff")) return "font/woff";
+        if (p.endsWith(".ttf")) return "font/ttf";
+        if (p.endsWith(".wasm")) return "application/wasm";
+        if (p.endsWith(".txt")) return "text/plain";
+        return "application/octet-stream";
+    }
+
+    private static boolean textual(String mime) {
+        return mime.startsWith("text/") || mime.equals("application/json") || mime.equals("application/manifest+json") || mime.equals("image/svg+xml");
+    }
+
+    private WebResourceResponse empty(int status, String reason) {
+        Map<String, String> h = new HashMap<>();
+        h.put("Cache-Control", "no-store");
+        return new WebResourceResponse("text/plain", "utf-8", status, reason, h, new ByteArrayInputStream(new byte[0]));
+    }
+
+    /** Une page ou un fichier de Synapse (app/dist dans l'APK) ; une adresse sans extension → l'application */
+    private WebResourceResponse serveAsset(Uri u) {
+        String path = u.getPath();
+        if (path == null || path.isEmpty() || path.equals("/")) path = "/index.html";
+        // pas de serveur ici : la page parle au Synapse central à son adresse à lui
+        if (path.startsWith("/api/") || path.startsWith("/__")) return empty(404, "Not Found");
+        if (path.contains("..") || path.contains("\\")) return empty(400, "Bad Request");
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        if (!name.contains(".")) path = "/index.html";
+        InputStream in;
+        try {
+            in = getAssets().open(WEB + path);
+        } catch (Exception e) {
+            return empty(404, "Not Found");
+        }
+        String mime = mimeOf(path);
+        Map<String, String> h = new HashMap<>();
+        boolean immutable = path.startsWith("/assets/");
+        h.put("Cache-Control", immutable ? "public, max-age=31536000, immutable" : "no-cache");
+        h.put("X-Content-Type-Options", "nosniff");
+        if (mime.equals("text/html")) h.put("Content-Security-Policy", CSP);
+        return new WebResourceResponse(mime, textual(mime) ? "utf-8" : null, 200, "OK", h, in);
     }
 
     // ───────────────────────── réseau du téléphone (Wi-Fi ↔ 4G/5G)
@@ -246,10 +216,7 @@ public class MainActivity extends Activity {
     }
 
     private void networkChanged(boolean available) {
-        if (onLocalPage) {
-            if (available) resolveAndOpen();
-            return;
-        }
+        if (web == null) return;
         web.evaluateJavascript("window.__synapseNetwork && window.__synapseNetwork(" + available + ")", null);
     }
 
@@ -258,19 +225,18 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        web.resumeTimers();
         web.onResume();
-        if (onLocalPage) {
-            if (System.currentTimeMillis() - lastResolve > 4000) resolveAndOpen();
-        } else {
-            web.evaluateJavascript("window.__synapseResume && window.__synapseResume()", null);
-        }
+        web.evaluateJavascript("window.__synapseResume && window.__synapseResume()", null);
         checkUpdate();
     }
 
     @Override
     protected void onPause() {
-        CookieManager.getInstance().flush();
+        // la page garde aussitôt sa copie du cerveau (« visibilitychange »), puis tout se met en pause : pas de réseau ni
+        // de batterie dépensés en arrière-plan. La synchronisation reprend dès le retour dans l'application.
         web.onPause();
+        web.pauseTimers();
         super.onPause();
     }
 
@@ -294,10 +260,6 @@ public class MainActivity extends Activity {
     @Override
     @SuppressWarnings("deprecation")
     public void onBackPressed() {
-        if (onLocalPage) {
-            moveTaskToBack(true);
-            return;
-        }
         web.evaluateJavascript("(window.__synapseBack && window.__synapseBack()) ? 'oui' : 'non'", value -> {
             if (value == null || !value.contains("oui")) moveTaskToBack(true);
         });
@@ -331,7 +293,8 @@ public class MainActivity extends Activity {
                 new AlertDialog.Builder(this)
                         .setTitle("Nouvelle version de Synapse")
                         .setMessage("La version " + latest.replaceAll("^[vV]", "") + " est disponible (tu as la " + BuildConfig.VERSION_NAME + ").\n\n"
-                                + "Télécharge-la puis installe-la. Si Android refuse de l’installer par-dessus, désinstalle d’abord Synapse : ton compte et tes données sont sur le serveur, rien n’est perdu.")
+                                + "Télécharge-la puis installe-la par-dessus. Si Android refuse, il faut d'abord désinstaller Synapse : "
+                                + "vérifie avant que tout est synchronisé (point vert à côté de ton prénom), puis reconnecte-toi après l'installation.")
                         .setPositiveButton("Télécharger", (d, w) -> openExternal("https://github.com/" + BuildConfig.DEPOT + "/releases/latest/download/Synapse.apk"))
                         .setNegativeButton("Plus tard", (d, w) -> p.edit().putString("maj_ignoree", latest).apply())
                         .show();
@@ -377,12 +340,26 @@ public class MainActivity extends Activity {
             return BuildConfig.VERSION_NAME;
         }
 
-        /** Le serveur ne répond plus depuis un moment : son adresse a peut-être changé, on la cherche */
+        /** V7 : Synapse est dans l'application (il marche sans serveur, et se synchronise quand il peut) */
         @JavascriptInterface
-        public void unreachable() {
-            ui.post(() -> {
-                if (System.currentTimeMillis() - lastResolve > 15000) resolveAndOpen();
-            });
+        public boolean standalone() {
+            return true;
+        }
+
+        /** La version, et où trouver le Synapse central (le dépôt GitHub où il publie son adresse, son adresse fixe) */
+        @JavascriptInterface
+        public String info() {
+            try {
+                JSONObject j = new JSONObject();
+                j.put("version", BuildConfig.VERSION_NAME);
+                j.put("depot", BuildConfig.DEPOT);
+                j.put("branche", BuildConfig.BRANCHE);
+                j.put("fichier", BuildConfig.FICHIER);
+                j.put("adresseFixe", BuildConfig.ADRESSE_FIXE);
+                return j.toString();
+            } catch (Exception e) {
+                return "{}";
+            }
         }
 
         @JavascriptInterface
@@ -398,96 +375,66 @@ public class MainActivity extends Activity {
             ui.post(() -> MainActivity.this.openExternal(url));
         }
 
-        /** Revenir à l'écran de connexion (choisir un autre serveur) */
+        /** Copier (un lien d'invitation…) dans le presse-papiers du téléphone */
         @JavascriptInterface
-        public void changeServer() {
-            ui.post(() -> showLocal("adresse"));
-        }
-
-        // ── seulement pour la page locale (démarrage, serveur injoignable)
-
-        @JavascriptInterface
-        public String info() {
-            try {
-                JSONObject j = new JSONObject();
-                SharedPreferences p = Central.prefs(MainActivity.this);
-                j.put("version", BuildConfig.VERSION_NAME);
-                j.put("depot", BuildConfig.DEPOT);
-                j.put("derniere", p.getString(Central.KEY_LAST, ""));
-                j.put("manuelle", p.getString(Central.KEY_MANUAL, ""));
-                j.put("erreur", lastError);
-                j.put("recherche", resolving);
-                return j.toString();
-            } catch (Exception e) {
-                return "{}";
-            }
-        }
-
-        @JavascriptInterface
-        public void retry() {
-            ui.post(MainActivity.this::resolveAndOpen);
-        }
-
-        /** Une adresse choisie à la main (vide : revenir à l'adresse publiée par le Synapse central) */
-        @JavascriptInterface
-        public void setServer(String address) {
-            if (!onLocalPage) return;
-            String a = Central.clean(address);
-            SharedPreferences.Editor e = Central.prefs(MainActivity.this).edit();
-            if (a == null) e.remove(Central.KEY_MANUAL);
-            else e.putString(Central.KEY_MANUAL, a);
-            e.apply();
+        public boolean copy(String text) {
+            if (text == null) return false;
             ui.post(() -> {
-                server = null;
-                resolveAndOpen();
+                try {
+                    ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                    if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("Synapse", text));
+                } catch (Exception ignored) {
+                    // presse-papiers indisponible
+                }
             });
+            return true;
         }
+
+        /** Envoyer un texte (une invitation…) par le menu de partage du téléphone : WhatsApp, SMS, e-mail… */
+        @JavascriptInterface
+        public boolean share(String text) {
+            if (text == null || text.isEmpty()) return false;
+            ui.post(() -> {
+                Intent send = new Intent(Intent.ACTION_SEND);
+                send.setType("text/plain");
+                send.putExtra(Intent.EXTRA_TEXT, text);
+                send.putExtra(Intent.EXTRA_SUBJECT, "Synapse");
+                try {
+                    startActivity(Intent.createChooser(send, "Envoyer avec…"));
+                } catch (ActivityNotFoundException e) {
+                    Toast.makeText(MainActivity.this, "Aucune application pour envoyer", Toast.LENGTH_SHORT).show();
+                }
+            });
+            return true;
+        }
+
+        /** (V6) gardés pour d'anciennes pages : la page V7 retrouve le Synapse central elle-même */
+        @JavascriptInterface
+        public void unreachable() {}
+
+        @JavascriptInterface
+        public void changeServer() {}
     }
 
     private final class Client extends WebViewClient {
         @Override
+        public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+            Uri u = request.getUrl();
+            if (u != null && APP_HOST.equalsIgnoreCase(u.getHost())) return serveAsset(u);
+            // tout le reste (le Synapse central, GitHub) : par Internet, comme d'habitude
+            return null;
+        }
+
+        @Override
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
             Uri u = request.getUrl();
+            if (APP_HOST.equalsIgnoreCase(u.getHost())) return false;
             String scheme = String.valueOf(u.getScheme());
-            if (scheme.equals("file")) return false;
-            if (isServerUrl(u)) return false;
             // tout le reste (GitHub, liens externes, téléchargement de l'application) : dans le navigateur du téléphone
             if (scheme.equals("http") || scheme.equals("https") || scheme.equals("mailto") || scheme.equals("tel")) {
                 openExternal(u.toString());
-                return true;
             }
             return true;
-        }
-
-        @Override
-        public void onPageStarted(WebView view, String url, Bitmap favicon) {
-            onLocalPage = url != null && url.startsWith(LOCAL_PAGE);
-        }
-
-        @Override
-        public void onPageFinished(WebView view, String url) {
-            if (url != null && !url.startsWith(LOCAL_PAGE)) rememberSession(url);
-        }
-
-        @Override
-        public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-            if (!request.isForMainFrame()) return;
-            // le serveur ne répond pas (éteint, nouvelle adresse, pas de réseau) : page d'attente, et on cherche
-            lastError = "Le Synapse central ne répond pas pour l’instant.";
-            showLocal("hors-ligne");
-            ui.postDelayed(MainActivity.this::resolveAndOpen, 600);
-        }
-
-        @Override
-        public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
-            if (!request.isForMainFrame()) return;
-            int code = response.getStatusCode();
-            // tunnel fermé (530), passerelle sans serveur derrière : l'adresse a peut-être changé
-            if (code == 530 || code == 502 || code == 504 || code == 521 || code == 523) {
-                lastError = "Le Synapse central ne répond pas pour l’instant.";
-                showLocal("hors-ligne");
-                ui.postDelayed(MainActivity.this::resolveAndOpen, 600);
-            }
         }
     }
 

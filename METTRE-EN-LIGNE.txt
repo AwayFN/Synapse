@@ -2,7 +2,9 @@
 =========================================================
 
 Toutes les applications Synapse (téléphones Android, PC Windows de tes amis)
-se connectent à UN serveur : le Synapse central. Trois façons de le faire
+se synchronisent avec UN serveur : le Synapse central (les téléphones
+marchent aussi sans lui : ils gardent leur copie du cerveau et se
+synchronisent dès qu'il répond). Trois façons de le faire
 tourner, de la plus simple à la plus solide. Dans tous les cas, c'est le
 même Synapse : comptes, cerveaux, invitations, espace admin.
 
@@ -16,8 +18,9 @@ même Synapse : comptes, cerveaux, invitations, espace admin.
   déjà enregistrée sur ce PC (celle qui sert à publier Synapse). Les
   applications la retrouvent toutes seules, sans se déconnecter.
   État : Espace admin > Serveur > « Adresse pour les applications ».
-- Ton PC doit rester allumé : s'il est éteint, les applications affichent
-  « Le Synapse central ne répond pas » et réessaient toutes seules.
+- Quand ton PC est éteint : les téléphones continuent (hors ligne, point
+  orange) et se synchronisent dès qu'il revient ; les PC de tes amis
+  affichent « Le Synapse central ne répond pas » et réessaient tout seuls.
 - Cloudflare réserve ces adresses gratuites aux essais (pas pour un vrai
   service public).
 

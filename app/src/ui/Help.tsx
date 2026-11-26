@@ -8,7 +8,8 @@ const NAV: [string, string][] = [
   ['Z Q S D / W A S D', 'voler · E / Espace monter · A / Q descendre'],
   ['Souris', 'flottement & parallaxe'],
   ['Clic sur un noyau', 'zoom + fiche (une note s’ouvre en grand)'],
-  ['Double-clic dans le vide · H', 'vue d’ensemble'],
+  ['Double-clic dans le vide · H', 'revenir aux neurones (vue d’ensemble)'],
+  ['Bouton ◎ (à côté de Créer)', 'revenir aux neurones, presque instantané même de très loin'],
   ['F', 'recentrer sur la sélection'],
 ];
 const KEYS: [string, string][] = [
@@ -60,8 +61,8 @@ export function Help() {
             ))}
             <div className="xs-label mt-6 mb-2">Au doigt (téléphone)</div>
             <div className="text-[12px] text-white/55 leading-relaxed">
-              Un doigt tourne autour du réseau, pincer avance ou recule, deux doigts déplacent, toucher ouvre un élément, double toucher dans le vide revient à la vue
-              d’ensemble.
+              Un doigt tourne autour du réseau, pincer avance ou recule, deux doigts déplacent, toucher ouvre un élément, double toucher dans le vide (ou le petit bouton rond à côté de « Créer ») ramène aux neurones, en
+              vue d’ensemble.
             </div>
           </div>
           <div>
@@ -109,7 +110,7 @@ export function Help() {
             <div className="text-[12px] text-white/55 leading-relaxed">
               Bouton <span className="text-white/80">Partager</span> : pour chaque invité, choisis <span className="text-white/80">peut modifier</span> ou{' '}
               <span className="text-white/80">peut seulement regarder</span>, puis envoie le lien (rien à installer pour lui). Une seule personne écrit à la fois dans une
-              même note : les autres la voient en lecture seule, avec son prénom. Les éléments 🔒 privés ne sont jamais montrés.
+              même note : les autres la voient en lecture seule, avec son prénom. Les éléments marqués privés (case dans leur fiche) ne sont jamais montrés.
             </div>
             <div className="xs-label mt-5 mb-2">Ton compte · les admins</div>
             <div className="text-[12px] text-white/55 leading-relaxed">

@@ -1,4 +1,4 @@
-// Synapse pour Android : une application qui ouvre le Synapse central (voir README.md, « Application Android »).
+// Synapse pour Android : Synapse lui-même, dans le téléphone (il marche sans serveur et se synchronise avec le Synapse central). Voir README.md.
 pluginManagement {
     repositories {
         google()

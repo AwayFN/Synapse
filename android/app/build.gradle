@@ -3,23 +3,46 @@ plugins {
 }
 
 // Réglages passés par la construction automatique sur GitHub (.github/workflows/android.yml) :
-//   -PversionName=6.0.0 -PversionCode=612 -PsynapseDepot=AwayFN/Synapse -PsynapseAdresse=https://…
+//   -PversionName=7.0.0 -PversionCode=70000 -PsynapseDepot=AwayFN/Synapse -PsynapseAdresse=https://…
 def prop = { String name, String fallback -> (project.findProperty(name) ?: fallback).toString() }
 def depot = prop('synapseDepot', 'AwayFN/Synapse')
 def adresse = prop('synapseAdresse', '')
 def keystore = System.getenv('SYNAPSE_KEYSTORE_FILE')
 def signed = keystore != null && new File(keystore).exists()
 
+// V7 : Synapse lui-même (l'application compilée, app/dist) est DANS l'APK : il marche sur le téléphone sans serveur.
+// Copié à chaque construction dans les « assets » (dossier web/), servi par MainActivity.
+def webDist = new File(rootDir, '../app/dist')
+def webOut = layout.buildDirectory.dir('generated/synapse-web').get().asFile
+def copySynapseWeb = tasks.register('copySynapseWeb', Copy) {
+    from(webDist) {
+        exclude '.synapse-build'
+    }
+    into(new File(webOut, 'web'))
+    doFirst {
+        if (!new File(webDist, 'index.html').exists()) {
+            throw new GradleException("app/dist/index.html introuvable : compile d'abord Synapse (node app/scripts/synapse.mjs --build)")
+        }
+    }
+}
+tasks.matching { it.name == 'preBuild' }.configureEach { dependsOn(copySynapseWeb) }
+
 android {
     namespace 'io.github.awayfn.synapse'
     compileSdk 35
+
+    sourceSets {
+        main {
+            assets.srcDirs += [webOut]
+        }
+    }
 
     defaultConfig {
         applicationId 'io.github.awayfn.synapse'
         minSdk 26
         targetSdk 35
-        versionCode prop('versionCode', '600').toInteger()
-        versionName prop('versionName', '6.0.0')
+        versionCode prop('versionCode', '70000').toInteger()
+        versionName prop('versionName', '7.0.0')
         // le dépôt GitHub où le Synapse central publie son adresse (branche synapse-adresse, fichier adresse.json)
         buildConfigField 'String', 'DEPOT', "\"${depot}\""
         buildConfigField 'String', 'BRANCHE', '"synapse-adresse"'

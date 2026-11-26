@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { apiBase, standalone } from './remote';
 
 /**
  * Session de partage : qui je suis dans ce cerveau, avec quels droits, qui d'autre est là.
@@ -169,6 +170,8 @@ export interface SessionState {
   adminOpen: boolean;
   accountOpen: boolean;
   feedbackOpen: boolean;
+  /** application Android : le Synapse central a une autre version (« app » : mettre l'application à jour) */
+  outdated: 'app' | 'serveur' | null;
 }
 
 export const ROLE_LABEL: Record<Role, string> = {
@@ -212,6 +215,7 @@ export const useSession = create<SessionState>(() => ({
   adminOpen: false,
   accountOpen: false,
   feedbackOpen: false,
+  outdated: null,
 }));
 
 /** Adresse publique pour les liens (invitations, nouveau mot de passe) */
@@ -227,7 +231,14 @@ export function linkBases(): { label: string; url: string }[] {
     add('Internet', s.share?.internet.state === 'on' ? s.share.internet.url : s.server?.internetUrl);
     add('Adresse fixe', s.server?.publicUrl);
     for (const u of s.share?.lan.urls ?? []) add('Même Wi-Fi', u);
-  } else add('Lien', location.origin);
+  } else if (standalone()) {
+    // application Android : ses pages sont dans le téléphone ; le lien mène au Synapse central (adresse fixe, sinon
+    // celle où il répond en ce moment)
+    add('Lien', s.server?.publicUrl || apiBase() || s.server?.internetUrl);
+  } else if (['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) {
+    // PC « client » (relais vers le Synapse central) : « localhost » ne marche que sur ce PC, le lien mène au central
+    add('Lien', s.server?.publicUrl || s.server?.internetUrl);
+  } else add('Lien', s.server?.publicUrl || location.origin);
   return out;
 }
 

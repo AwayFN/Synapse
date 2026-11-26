@@ -27,7 +27,7 @@ bootstrap().then((b) => {
     case 'join':
       return show(<JoinScreen token={b.token} info={b.info} hello={b.hello} />);
     case 'auth':
-      return show(<AuthScreen hello={b.hello} code={b.code} codeInfo={b.codeInfo} linkError={b.linkError} />);
+      return show(<AuthScreen hello={b.hello} code={b.code} codeInfo={b.codeInfo} linkError={b.linkError} offline={b.offline} />);
     case 'setup':
       return show(<SetupScreen token={b.token} />);
     case 'reset':

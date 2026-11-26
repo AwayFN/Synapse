@@ -66,6 +66,11 @@ class Rig {
   shift = 0;
   booted = false;
   speedScale = 1;
+  /** retour aux neurones demandé (bouton, H) : vol court et rapide */
+  fast = false;
+  /** de temps en temps : est-on loin des neurones ? (le bouton « revenir » s'allume) */
+  farCheck = 0;
+  private center = new THREE.Vector3();
   cursor = '';
   el: HTMLElement | null = null;
   private ray = new THREE.Raycaster();
@@ -143,19 +148,50 @@ class Rig {
     this.setOrbitFrom(node.render);
     this.orbit.dist = node.radius * 4.4 + 7;
     this.mode = 'focus';
+    this.fast = false;
   }
 
-  overview() {
+  /**
+   * Vue d'ensemble : revenir aux neurones. De très loin, on ne refait pas tout le trajet : un saut juste à côté
+   * du réseau (dans la direction d'où l'on vient, déjà tourné vers lui), puis un vol court. Presque instantané.
+   */
+  overview(fast = false) {
     const { center, radius } = layout.bounds();
+    const fit = this.fitDistance(radius);
+    const far = this.basePos.distanceTo(center) > fit * 1.6;
+    if (far) {
+      const dir = this.v1.subVectors(this.basePos, center);
+      if (dir.lengthSq() < 1e-6) dir.set(0, 0.3, 1);
+      dir.normalize();
+      // ni par-dessus ni par-dessous : on revient à hauteur du réseau
+      dir.y = THREE.MathUtils.clamp(dir.y, -0.45, 0.6);
+      dir.normalize();
+      this.basePos.copy(center).addScaledVector(dir, fit * 1.35);
+      this.m.lookAt(this.basePos, center, UP);
+      this.baseQuat.setFromRotationMatrix(this.m);
+      this.float.set(0, 0);
+      // un bref fondu masque le saut
+      const canvas = this.el?.querySelector('canvas');
+      try {
+        canvas?.animate([{ opacity: 0.12 }, { opacity: 1 }], { duration: 420, easing: 'ease-out' });
+      } catch {
+        /* pas d'animation : le saut reste net */
+      }
+    }
+    this.vel.set(0, 0, 0);
+    this.yawVel = 0;
+    this.pitchVel = 0;
     this.pointTarget.copy(center);
     this.setOrbitFrom(center, 0.12, 0.6);
-    this.orbit.dist = this.fitDistance(radius);
+    this.orbit.dist = fit;
     this.mode = 'point';
+    this.fast = fast || far;
     this.focusId = null;
     if (useUI.getState().focusId) useUI.setState({ focusId: null });
   }
 
   toFree() {
+    this.fast = false;
     this.mode = 'free';
     this.e.setFromQuaternion(this.baseQuat, 'YXZ');
     this.yaw = this.e.y;
@@ -468,6 +504,16 @@ class Rig {
     if (!Number.isFinite(minD)) minD = 40;
     this.speedScale = THREE.MathUtils.clamp(minD / 22, 0.3, 6);
 
+    // loin des neurones ? (quatre fois par seconde : le bouton « revenir aux neurones » s'allume)
+    this.farCheck -= dt;
+    if (this.farCheck <= 0) {
+      this.farCheck = 0.25;
+      if (layout.list.length) {
+        const { center, radius } = layout.bounds(this.center);
+        telemetry.far = this.basePos.distanceTo(center) > this.fitDistance(radius) * 1.6;
+      } else telemetry.far = false;
+    }
+
     if (this.mode === 'free') {
       const fwd = this.v1.set(0, 0, -1).applyQuaternion(this.baseQuat);
       const right = this.v2.set(1, 0, 0).applyQuaternion(this.baseQuat);
@@ -498,10 +544,10 @@ class Rig {
         o.thetaVel *= Math.exp(-dt * 6);
         o.phiVel *= Math.exp(-dt * 6);
         this.sphere(this.desired, target, o.dist, o.theta, o.phi);
-        smoothDamp(this.basePos, this.desired, this.vel, this.mode === 'point' ? 0.85 : 0.5, dt);
+        smoothDamp(this.basePos, this.desired, this.vel, this.mode === 'point' ? (this.fast ? 0.32 : 0.85) : 0.5, dt);
         this.m.lookAt(this.basePos, target, UP);
         this.q.setFromRotationMatrix(this.m);
-        this.baseQuat.slerp(this.q, 1 - Math.exp(-dt * 4.2));
+        this.baseQuat.slerp(this.q, 1 - Math.exp(-dt * (this.fast ? 9 : 4.2)));
         if (this.mode === 'point' && this.basePos.distanceTo(this.desired) < 0.8 && this.vel.length() < 1.2) {
           this.toFree();
         }
@@ -575,6 +621,8 @@ export function FlyControls() {
     const off = rig.attach(el);
     const offFx = fx.on((e) => {
       if (e.kind === 'overview') rig.overview();
+      // le bouton « revenir aux neurones » : tout de suite, même de très loin
+      else if (e.kind === 'home') rig.overview(true);
     });
     return () => {
       off();

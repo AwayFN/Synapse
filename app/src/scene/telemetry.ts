@@ -9,6 +9,8 @@ export const telemetry = {
   fps: 60,
   pulses: 0,
   pulsesPerMin: 0,
+  /** loin des neurones : le bouton « revenir aux neurones » s'allume */
+  far: false,
 };
 
 /** DOM labels registry, filled by <LabelLayer/>, positioned by <LabelsProjector/> */

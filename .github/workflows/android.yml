@@ -1,12 +1,15 @@
 # Construit l'application Android de Synapse (Synapse.apk) et la publie sur la page « Releases » du dépôt.
-#   - à chaque étiquette « v… » (ex. v6.0.0) : nouvelle version publiée, téléchargeable par tout le monde à
+# V7 : l'APK contient Synapse lui-même (app/dist) : il marche sur le téléphone sans serveur, et se synchronise avec le
+# Synapse central quand il répond.
+#   - à chaque étiquette « v… » (ex. v7.0.0) : nouvelle version publiée, téléchargeable par tout le monde à
 #     https://github.com/<dépôt>/releases/latest/download/Synapse.apk
 #   - à la main (onglet Actions → « Application Android » → Run workflow) : un essai, sans publication.
 #
 # Signature : avec le secret SYNAPSE_KEYSTORE_BASE64 (une clé .jks en base64 ; mot de passe dans le secret
 # SYNAPSE_KEYSTORE_PASSWORD, « synapse » sinon ; alias « synapse »), toutes les versions ont la même signature et
 # s'installent par-dessus la précédente. Sans ce secret, chaque version a sa propre clé : pour mettre à jour, il faut
-# désinstaller l'ancienne (le compte et les données restent sur le serveur, rien n'est perdu).
+# désinstaller l'ancienne (après avoir vérifié que tout est synchronisé : le compte et le cerveau sont alors sur le
+# Synapse central).
 name: Application Android
 
 on:
@@ -15,7 +18,7 @@ on:
     tags: ['v*']
     # une modification de l'application Android : construction d'essai (sans publication)
     branches: ['**']
-    paths: ['android/**', '.github/workflows/android.yml', 'app/central.json']
+    paths: ['android/**', '.github/workflows/android.yml', 'app/central.json', 'app/dist/**']
   workflow_dispatch:
 
 permissions:
@@ -41,9 +44,11 @@ jobs:
       - name: Version
         id: v
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF#refs/tags/v}"; else V="6.0.0-essai.${GITHUB_RUN_NUMBER}"; fi
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF#refs/tags/v}"; else V="7.0.0-essai.${GITHUB_RUN_NUMBER}"; fi
+          # numéro de version Android : 7.0.0 → 70000, 7.1.2 → 70102 (toujours plus grand que le précédent)
+          IFS=. read -r MA MI PA <<< "${V%%-*}"
           echo "name=$V" >> "$GITHUB_OUTPUT"
-          echo "code=$((600 + GITHUB_RUN_NUMBER))" >> "$GITHUB_OUTPUT"
+          echo "code=$((10#${MA:-0} * 10000 + 10#${MI:-0} * 100 + 10#${PA:-0}))" >> "$GITHUB_OUTPUT"
           echo "adresse=$(jq -r '.adresse // ""' app/central.json)" >> "$GITHUB_OUTPUT"
 
       - name: Clé de signature permanente (si le secret existe)
@@ -82,6 +87,7 @@ jobs:
           files: Synapse.apk
           body: |
             **Synapse pour Android** : télécharge `Synapse.apk` ci-dessous (depuis ton téléphone), ouvre-le et autorise l'installation.
-            Ouvre Synapse : crée ton compte (ou connecte-toi). Tout ce que tu fais apparaît en direct sur ton PC, et l'inverse.
+            Ouvre Synapse : crée ton compte (ou connecte-toi). Synapse marche sur le téléphone même sans réseau et sans PC allumé ; tout se
+            synchronise avec ton compte dès que le Synapse central répond, et tu retrouves tout sur ton PC en t'y connectant.
 
             Sur PC (Windows) : télécharge le code (« Source code (zip) »), extrais-le, puis double-clique sur « Lancer Synapse ».

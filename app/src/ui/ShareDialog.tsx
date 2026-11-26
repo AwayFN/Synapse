@@ -7,6 +7,7 @@ import { Corners, cvar, Kbd } from './common';
 import { QrCode } from './Qr';
 import { useAllTags } from './TagBar';
 import { ReachButton, ShareSheetButton } from './Reach';
+import { copyText } from '../sync/native';
 
 type GuestRole = Exclude<Role, 'owner'>;
 const ROLES: GuestRole[] = ['edition', 'lecture'];
@@ -37,26 +38,17 @@ function bases(s: ShareStatus | null): { label: string; url: string }[] {
 }
 
 function CopyButton({ text, label = 'Copier' }: { text: string; label?: string }) {
-  const [ok, setOk] = useState(false);
+  const [ok, setOk] = useState<boolean | null>(null);
   return (
     <button
       className="btn !py-1 !px-2 !text-[9.5px] flex-none"
       onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(text);
-        } catch {
-          const ta = document.createElement('textarea');
-          ta.value = text;
-          document.body.appendChild(ta);
-          ta.select();
-          document.execCommand('copy');
-          ta.remove();
-        }
-        setOk(true);
-        window.setTimeout(() => setOk(false), 1600);
+        // dans l'application Android, le presse-papiers du téléphone (fiable) ; sinon celui du navigateur
+        setOk(await copyText(text));
+        window.setTimeout(() => setOk(null), 1600);
       }}
     >
-      {ok ? '✓ Copié' : label}
+      {ok === true ? '✓ Copié' : ok === false ? 'Copie impossible' : label}
     </button>
   );
 }
@@ -362,15 +354,19 @@ function Dialog() {
   const online = useSession((st) => st.online);
   const [ownerName, setOwnerName] = useState('');
   const [brainName, setBrainName] = useState('');
+  const [failed, setFailed] = useState(false);
+  const mode = useSession((st) => st.mode);
   useEffect(() => {
     api<ShareStatus>('/api/share')
       .then((st) => {
+        setFailed(false);
         useSession.setState({ share: st });
         setOwnerName(st.ownerNameSet ? st.ownerName : '');
         setBrainName(st.brainName);
       })
-      .catch(() => {});
-  }, []);
+      .catch(() => setFailed(true));
+    // (de nouveau quand la connexion revient)
+  }, [mode === 'online']);
   const onlineIds = useMemo(() => new Set(online.map((p) => p.id)), [online]);
   const local = useSession((st) => st.local);
   const manage = !!s?.manageAccess && local;
@@ -389,8 +385,15 @@ function Dialog() {
             ✕ <span className="text-white/35 ml-1">Échap</span>
           </button>
         </div>
+        {(failed || mode !== 'online') && (
+          <div className="glass p-3 mt-6 text-[12.5px] text-white/65 leading-relaxed" data-share-offline>
+            {failed && !s
+              ? 'Pour inviter quelqu’un, Synapse doit joindre le Synapse central, qui ne répond pas pour l’instant (ordinateur éteint, ou pas de réseau). Réessaie dans un moment : tout le reste marche en attendant.'
+              : 'Hors ligne pour l’instant : ce qui est affiché ici peut dater un peu, et les nouveaux liens attendront le retour de la connexion.'}
+          </div>
+        )}
         {!s ? (
-          <div className="mono text-[11px] text-white/40 mt-8">Chargement…</div>
+          !failed && <div className="mono text-[11px] text-white/40 mt-8">Chargement…</div>
         ) : (
           <>
             <div className="mt-6 grid grid-cols-2 max-md:grid-cols-1 gap-4">

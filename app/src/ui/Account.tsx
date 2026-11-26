@@ -1,50 +1,74 @@
-import { useState } from 'react';
-import { api, ApiError, clientId, openBrain, pendingChanges } from '../sync/client';
+import { useEffect, useState } from 'react';
+import { api, ApiError, clientId, openBrain, pendingChanges, retrySync, syncInfo } from '../sync/client';
 import { deName, initialsOf, linkBases, ROLE_LABEL, SERVER_ROLE_LABEL, useSession } from '../sync/session';
-import { android, androidDownloadUrl, isAndroidApp, openExternal, releasesUrl } from '../sync/native';
+import { android, androidDownloadUrl, copyText, isAndroidApp, openExternal, releasesUrl } from '../sync/native';
+import { setSessionToken, standalone } from '../sync/remote';
+import { forgetBrain, forgetEverything } from '../sync/offline';
 import { useUI } from '../store/ui';
 import { ALERT_HEX } from '../lib/color';
+import { fmtRelative } from '../lib/time';
 import { Corners, cvar, Kbd } from './common';
 import { QrCode } from './Qr';
 import { JoinFriend, ReachButton, ShareSheetButton } from './Reach';
+import { ServerAddress } from './Gate';
 
-/** Se déconnecter (sur ce PC aussi) : il faudra se reconnecter avec son e-mail et son mot de passe */
+/**
+ * Se déconnecter (sur ce PC aussi) : il faudra se reconnecter avec son e-mail et son mot de passe.
+ * Dans l'application Android, rien de ce compte ne reste sur le téléphone (tout est sur le Synapse central).
+ */
 export async function logout() {
-  if (pendingChanges() > 0 && !window.confirm('Des modifications n’ont pas encore pu partir (connexion coupée). Se déconnecter quand même ? Elles seraient perdues.')) return;
-  await api('/api/auth/logout', {}).catch(() => {});
+  const waiting = pendingChanges();
+  if (
+    waiting > 0 &&
+    !window.confirm(
+      standalone()
+        ? `${waiting} modification${waiting > 1 ? 's' : ''} n’${waiting > 1 ? 'ont' : 'a'} pas encore pu partir vers le Synapse central (il ne répond pas). Se déconnecter quand même ? ${waiting > 1 ? 'Elles seraient perdues' : 'Elle serait perdue'}.`
+        : 'Des modifications n’ont pas encore pu partir (connexion coupée). Se déconnecter quand même ? Elles seraient perdues.',
+    )
+  )
+    return;
+  await api('/api/auth/logout', {}, 6000).catch(() => {});
   try {
     for (const k of Object.keys(localStorage)) if (k.startsWith('synapse-attente-')) localStorage.removeItem(k);
   } catch {
     /* pas grave */
   }
+  if (standalone()) {
+    forgetEverything();
+    setSessionToken(null);
+  }
   location.replace('/');
 }
 
-function copy(text: string) {
-  return navigator.clipboard.writeText(text).catch(() => {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    ta.remove();
-  });
-}
-
 export function CopyButton({ text, label = 'Copier' }: { text: string; label?: string }) {
-  const [ok, setOk] = useState(false);
+  const [ok, setOk] = useState<boolean | null>(null);
   return (
     <button
       className="btn !py-1 !px-2 !text-[9.5px] flex-none"
       onClick={async () => {
-        await copy(text);
-        setOk(true);
-        window.setTimeout(() => setOk(false), 1600);
+        setOk(await copyText(text));
+        window.setTimeout(() => setOk(null), 1600);
       }}
     >
-      {ok ? '✓ Copié' : label}
+      {ok === true ? '✓ Copié' : ok === false ? 'Copie impossible' : label}
     </button>
   );
+}
+
+/**
+ * Application Android : où en est la synchronisation avec le Synapse central (dans la pastille du compte, et en détail
+ * dans « Mon compte »).
+ */
+export function useSyncState() {
+  const mode = useSession((s) => s.mode);
+  const outdated = useSession((s) => s.outdated);
+  const [info, setInfo] = useState(() => syncInfo());
+  useEffect(() => {
+    const id = window.setInterval(() => setInfo(syncInfo()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const online = mode === 'online';
+  return { mode, online, outdated, ...info };
 }
 
 const errText = (e: unknown, map: Record<string, string>) => {
@@ -54,6 +78,27 @@ const errText = (e: unknown, map: Record<string, string>) => {
 };
 
 /** HUD : mon compte (initiales), et l'espace admin (créateur et admins seulement) */
+/** Application Android : un point dans la pastille du compte (vert : synchronisé · orange : hors ligne, ça attend) */
+function SyncDot() {
+  const s = useSyncState();
+  if (!standalone()) return null;
+  const ok = s.online && !s.pending && !s.outdated;
+  const title = s.outdated
+    ? 'Synchronisation en pause : une autre version de Synapse de l’autre côté'
+    : s.online
+      ? s.pending
+        ? 'Envoi en cours…'
+        : 'Synchronisé avec le Synapse central'
+      : `Hors ligne : tout est gardé sur ce téléphone${s.pending ? ` (${s.pending} modification${s.pending > 1 ? 's' : ''} à envoyer)` : ''}`;
+  return (
+    <span
+      className={`w-2 h-2 rounded-full flex-none ${ok ? 'bg-[#39ff88] shadow-[0_0_6px_#39ff88]' : 'bg-[#ffb020] shadow-[0_0_6px_#ffb020] breathe'}`}
+      title={title}
+      data-sync={ok ? 'ok' : s.online ? 'envoi' : 'hors-ligne'}
+    />
+  );
+}
+
 export function AccountChip() {
   const mode = useSession((s) => s.mode);
   const account = useSession((s) => s.account);
@@ -74,9 +119,10 @@ export function AccountChip() {
           {pending > 0 && <span className="mono text-[9px] px-1.5 rounded-full bg-[rgb(var(--alert)/0.25)] text-white">{pending}</span>}
         </button>
       )}
-      <button className="glass flex items-center gap-2 pl-1.5 pr-3 py-1 max-md:pr-1.5 hover:border-white/20" title="Mon compte, mes cerveaux" onClick={() => useSession.setState({ accountOpen: true })}>
+      <button className="glass flex items-center gap-2 pl-1.5 pr-3 py-1 max-md:pr-2 hover:border-white/20" title="Mon compte, mes cerveaux" onClick={() => useSession.setState({ accountOpen: true })}>
         <span className="w-6 h-6 rounded-full border border-white/50 flex items-center justify-center mono text-[9px] text-white/85">{initialsOf(name || '?')}</span>
         <span className="text-[11.5px] text-white/80 max-w-[140px] truncate max-md:hidden">{name}</span>
+        <SyncDot />
         <span className="text-white/35 text-[9px] max-md:hidden">▾</span>
       </button>
     </div>
@@ -156,6 +202,7 @@ function Brains() {
                 if (!window.confirm(`Quitter le cerveau ${deName(b.ownerName)} ? Il faudra une nouvelle invitation pour y revenir.`)) return;
                 setBusy(b.id);
                 await api('/api/account/leave', { b: b.id }).catch(() => {});
+                forgetBrain(b.id);
                 if (b.id === current) location.replace('/');
                 else useSession.setState((s) => ({ brains: s.brains.filter((x) => x.id !== b.id) }));
                 setBusy(null);
@@ -227,19 +274,73 @@ function InviteFriend() {
  * L'application Android : un QR code qui la télécharge (dernière version publiée sur GitHub). On l'installe, on
  * se connecte avec son e-mail et son mot de passe, et tout est synchronisé en direct avec le PC.
  */
+/** Application Android : l'état de la synchronisation avec le Synapse central, en clair */
+function SyncStatus() {
+  const s = useSyncState();
+  const n = s.pending;
+  const waiting = n ? ` ${n} modification${n > 1 ? 's' : ''} attend${n > 1 ? 'ent' : ''} sur ce téléphone et partir${n > 1 ? 'ont' : 'a'} toute${n > 1 ? 's' : ''} seule${n > 1 ? 's' : ''}.` : '';
+  return (
+    <div className="glass p-3 flex flex-col gap-2" data-sync-status>
+      <div className="flex items-center gap-2">
+        <SyncDot />
+        <span className="hud text-[10px] text-white/80">
+          {s.outdated ? 'Synchronisation en pause' : s.online ? (n ? 'Envoi en cours…' : 'Synchronisé') : 'Hors ligne'}
+        </span>
+      </div>
+      <div className="text-[12px] text-white/55 leading-relaxed">
+        {s.outdated === 'app'
+          ? 'Une nouvelle version de l’application est sortie : installe-la pour synchroniser de nouveau.'
+          : s.outdated === 'serveur'
+            ? 'Le Synapse central n’est pas encore à jour (sur le PC du créateur : « Lancer Synapse »).'
+            : s.online
+              ? 'Tout ce que tu fais ici apparaît en direct sur tes autres appareils (ton PC…), et l’inverse.'
+              : `Le Synapse central ne répond pas pour l’instant${s.offlineSince ? ` (depuis ${fmtRelative(s.offlineSince - Date.now()).replace(/^il y a /, '')})` : ''} : l’ordinateur qui l’héberge est peut-être éteint, ou le téléphone n’a pas de réseau. Continue comme d’habitude : tout est gardé sur ce téléphone.${waiting}`}
+        {s.online && waiting}
+      </div>
+      {!s.online && !s.outdated && (
+        <button className="btn w-fit !py-1 !text-[9.5px]" onClick={() => retrySync()}>
+          Réessayer maintenant
+        </button>
+      )}
+      {s.server && <div className="mono text-[9.5px] text-white/30 break-all">Synapse central : {s.server}</div>}
+    </div>
+  );
+}
+
 function AndroidApp() {
   const depot = useSession((s) => s.server?.depot);
   const [show, setShow] = useState(false);
+  if (standalone()) {
+    const v = android()?.version?.();
+    return (
+      <div className="flex flex-col gap-3 text-[12px] text-white/55 leading-relaxed">
+        <span>
+          Tu es dans l’application Android{v ? ` (version ${v})` : ''}. Synapse marche sur ce téléphone même sans réseau : ton cerveau y est gardé, et se
+          synchronise avec ton compte dès que le Synapse central répond. Sur ton PC, connecte-toi avec le même e-mail : tu y retrouves tout.
+        </span>
+        <SyncStatus />
+        <div className="flex gap-2 flex-wrap">
+          {depot && (
+            <button className="btn w-fit" onClick={() => openExternal(releasesUrl(depot))}>
+              Voir les nouvelles versions
+            </button>
+          )}
+        </div>
+        <ServerAddress onSaved={() => location.replace('/')} />
+      </div>
+    );
+  }
   if (isAndroidApp()) {
     const v = android()?.version?.();
     return (
       <div className="flex flex-col gap-2 text-[12px] text-white/55 leading-relaxed">
         <span>
-          Tu es dans l’application Android{v ? ` (version ${v})` : ''}. Tout ce que tu fais ici apparaît en direct sur ton PC, et l’inverse.
+          Tu es dans l’application Android{v ? ` (version ${v})` : ''}. Une nouvelle version existe : elle marche même sans réseau, et même quand le PC qui
+          héberge Synapse est éteint.
         </span>
         {depot && (
-          <button className="btn w-fit" onClick={() => openExternal(releasesUrl(depot))}>
-            Voir les nouvelles versions
+          <button className="btn w-fit" onClick={() => openExternal(androidDownloadUrl(depot))}>
+            ↓ Télécharger la nouvelle version
           </button>
         )}
       </div>
@@ -445,6 +546,11 @@ function DangerZone() {
                 setError(null);
                 try {
                   await api('/api/account/delete', { confirm, password });
+                  // application Android : plus rien de ce compte sur le téléphone
+                  if (standalone()) {
+                    forgetEverything();
+                    setSessionToken(null);
+                  }
                   location.replace('/');
                 } catch (e) {
                   setError(errText(e, { 'last-creator': 'Tu es le dernier admin : nomme d’abord un autre admin dans l’espace admin.', current: 'Mot de passe incorrect.' }));

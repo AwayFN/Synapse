@@ -100,7 +100,7 @@ function Body({ e }: { e: Entity }) {
             <Section label="Partage">
               <label className="flex items-start gap-2 text-[12px] text-white/60 cursor-pointer">
                 <input type="checkbox" className="mt-[3px]" checked={!!e.private} onChange={(ev) => update(e.id, { private: ev.target.checked || undefined })} />
-                <span>🔒 Privé : jamais montré aux personnes que tu invites</span>
+                <span>Privé : jamais montré aux personnes que tu invites</span>
               </label>
             </Section>
           )}

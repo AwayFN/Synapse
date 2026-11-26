@@ -1,11 +1,14 @@
-// Serveur Synapse (V6) : sert l'application, garde le cerveau de chacun, le partage, et donne au créateur
+// Serveur Synapse (V7) : sert l'application, garde le cerveau de chacun, le partage, et donne au créateur
 // une vue d'ensemble de son serveur (l'espace admin). C'est le « Synapse central » : les applications (PC
-// Windows, téléphones Android) s'y connectent toutes, chacune avec son compte.
+// Windows, téléphones Android) s'y synchronisent toutes, chacune avec son compte.
 //
 // Qui est qui :
 //   - un compte = un cookie de session (HttpOnly), obtenu en créant son compte ou en se connectant (e-mail + mot
 //     de passe). Partout, y compris sur le PC qui fait tourner Synapse : on reste connecté (la session se prolonge
 //     à chaque visite) jusqu'à « Se déconnecter » ; il faut alors se reconnecter ;
+//   - l'application Android (V7) contient Synapse elle-même et marche sans serveur : ses pages viennent du
+//     téléphone (https://appassets.androidplatform.net) et se synchronisent ici avec le même jeton de session, mais
+//     envoyé dans l'en-tête « Authorization: Bearer … » (pas de cookie d'une autre adresse) ;
 //   - sur ce PC (boucle locale, adressée à « localhost », sans intermédiaire), le compte « de ce PC » ouvre en plus
 //     les accès (Wi-Fi, Internet) ;
 //   - un invité sans compte = un cookie propre à un cerveau, obtenu avec un lien d'invitation.
@@ -45,8 +48,23 @@ import {
   safeEqual,
 } from './util.mjs';
 
-export const PROTO = 6;
+export const PROTO = 7;
 const ACCOUNT_COOKIE = 'synapse_a';
+/**
+ * Les pages de l'application Android viennent du téléphone lui-même : seule cette origine (et celles de
+ * SYNAPSE_CORS_ORIGINS, pour les essais) peut lire les réponses de l'API depuis une autre adresse. Elle s'identifie
+ * avec son jeton (Authorization: Bearer), jamais avec un cookie : rien ne change pour les navigateurs.
+ */
+const APP_ORIGINS = new Set([
+  'https://appassets.androidplatform.net',
+  ...String(process.env.SYNAPSE_CORS_ORIGINS || '')
+    .split(',')
+    .map((s) => s.trim().replace(/\/+$/, ''))
+    .filter(Boolean),
+]);
+const bearerOf = (req) => /^Bearer\s+([A-Za-z0-9_-]{20,100})$/i.exec(String(req.headers.authorization || ''))?.[1] || null;
+/** L'application demande son jeton de session dans la réponse (« X-Synapse-Jeton: 1 ») : elle le garde elle-même */
+const tokenFor = (req, token) => (req.headers['x-synapse-jeton'] === '1' ? { session: token } : {});
 /** le cookie de session vit le plus longtemps possible (400 jours, la limite des navigateurs), renouvelé à chaque visite */
 const SESSION_COOKIE_DAYS = 400;
 const LOCAL_NAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
@@ -279,9 +297,11 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
     let account = null;
     let sessionHash = null;
     let suspended = false;
-    // V6 : partout (même sur ce PC), le compte vient de la session ; « Se déconnecter » demande de se reconnecter
-    if (cookies[ACCOUNT_COOKIE]) {
-      const r = accounts.session(cookies[ACCOUNT_COOKIE]);
+    // V6 : partout (même sur ce PC), le compte vient de la session ; « Se déconnecter » demande de se reconnecter.
+    // V7 : l'application Android envoie le même jeton dans l'en-tête Authorization (ses pages sont dans le téléphone)
+    const token = cookies[ACCOUNT_COOKIE] || bearerOf(req);
+    if (token) {
+      const r = accounts.session(token);
       if (r) {
         account = r.account;
         sessionHash = r.hash;
@@ -295,7 +315,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       accounts.touch(account);
       tele.active(account.id);
     }
-    return { local, account, cookies, sessionHash, suspended, ip: clientAddress(req, hosted), via: share ? share.via(req) : 'internet', device: deviceOf(req) };
+    return { local, account, cookies, token, sessionHash, suspended, ip: clientAddress(req, hosted), via: share ? share.via(req) : 'internet', device: deviceOf(req) };
   }
 
   /**
@@ -673,7 +693,8 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       // passage à la V6 sur le PC du créateur (une seule fois), sinon : la session se prolonge à chaque visite
       let cookie = localGrant(req, w);
       if (!cookie && w.account && w.sessionHash) {
-        cookie = sessionCookie(req, w.cookies[ACCOUNT_COOKIE]);
+        // (l'application Android garde son jeton elle-même : pas de cookie à prolonger)
+        if (w.cookies[ACCOUNT_COOKIE]) cookie = sessionCookie(req, w.cookies[ACCOUNT_COOKIE]);
         accounts.touchDevice(w.sessionHash, w.device);
       }
       const e = maint && !isStaff(w.account) ? null : targetBrain(w, url);
@@ -825,7 +846,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       const how = (via === 'invitation' ? 'avec une invitation' : via === 'cerveau' ? 'invité dans un cerveau' : 'inscription libre') + (w.device.app === 'android' ? ', application Android' : w.device.app === 'windows' ? ', application Windows' : '');
       tele.event('inscription', `${a.name} a créé son compte (${how})`, a, maskIp(w.ip));
       staffPing();
-      return send(200, { ok: true, brainId: brainJoin?.e.id || a.brainId }, { 'Set-Cookie': sessionCookie(req, token) });
+      return send(200, { ok: true, brainId: brainJoin?.e.id || a.brainId, ...tokenFor(req, token) }, { 'Set-Cookie': sessionCookie(req, token) });
     }
     if (pathname === '/api/auth/login') {
       if (mustPost()) return;
@@ -847,11 +868,11 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       tele.bump('log');
       tele.active(a.id);
       tele.event('connexion', `connexion de ${a.name}${w.device.app !== 'navigateur' ? ` (application ${w.device.app === 'android' ? 'Android' : 'Windows'})` : ''}`, a, maskIp(w.ip));
-      return send(200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
+      return send(200, { ok: true, ...tokenFor(req, token) }, { 'Set-Cookie': sessionCookie(req, token) });
     }
     if (pathname === '/api/auth/logout') {
       if (mustPost()) return;
-      if (w.cookies[ACCOUNT_COOKIE]) accounts.endSession(w.cookies[ACCOUNT_COOKIE]);
+      if (w.token) accounts.endSession(w.token);
       // après une déconnexion sur ce PC, il faut se reconnecter (plus jamais de session offerte)
       if (w.local && !settings.d.localGrant) settings.set({ localGrant: true });
       if (w.account) tele.event('connexion', `${w.account.name || 'créateur'} s’est déconnecté`, w.account);
@@ -881,7 +902,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       settings.set({ localGrant: true });
       tele.event('compte', `${pc.name} a choisi son e-mail et son mot de passe (compte de ce PC)`, pc);
       const token = openSession(req, w, pc.id);
-      return send(200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
+      return send(200, { ok: true, ...tokenFor(req, token) }, { 'Set-Cookie': sessionCookie(req, token) });
     }
     // ── nouvelle installation : la personne devant ce PC crée son compte (un compte normal, pas admin)
     if (pathname === '/api/auth/first') {
@@ -901,7 +922,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       settings.set({ localGrant: true });
       tele.event('compte', `${a.name} a créé son compte (installation de Synapse)`, a);
       const token = openSession(req, w, a.id);
-      return send(200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
+      return send(200, { ok: true, ...tokenFor(req, token) }, { 'Set-Cookie': sessionCookie(req, token) });
     }
     if (pathname === '/api/auth/setup') {
       if (mustPost()) return;
@@ -920,7 +941,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       accounts.flush();
       tele.event('serveur', `compte créateur créé : ${a.name}`, a, maskIp(w.ip));
       const token = openSession(req, w, a.id);
-      return send(200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
+      return send(200, { ok: true, ...tokenFor(req, token) }, { 'Set-Cookie': sessionCookie(req, token) });
     }
     if (pathname === '/api/auth/reset/info' || pathname === '/api/auth/reset') {
       if (mustPost()) return;
@@ -937,7 +958,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       kickAccount(r.account.id, 'logout');
       tele.event('compte', `mot de passe réinitialisé : ${r.account.name}`, r.account, maskIp(w.ip));
       const token = openSession(req, w, r.account.id);
-      return send(200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
+      return send(200, { ok: true, ...tokenFor(req, token) }, { 'Set-Cookie': sessionCookie(req, token) });
     }
 
     // ── connexion d'un autre appareil (téléphone) par le QR code créé sur un appareil déjà connecté
@@ -953,7 +974,7 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
       tele.bump('log');
       tele.active(r.account.id);
       tele.event('connexion', `connexion de ${r.account.name || 'créateur'} sur un autre appareil (QR code)`, r.account, maskIp(w.ip));
-      return send(200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
+      return send(200, { ok: true, ...tokenFor(req, token) }, { 'Set-Cookie': sessionCookie(req, token) });
     }
 
     // ── retours (idées, problèmes) : comptes et invités
@@ -1435,6 +1456,19 @@ export function startServer({ port, host, dist, idleMs, firstMs, log, stamp = ()
     } catch {
       res.writeHead(400);
       return res.end();
+    }
+    // l'application Android : ses pages viennent du téléphone, ses requêtes d'une autre origine (avec son jeton)
+    if (pathname.startsWith('/api/')) {
+      const origin = String(req.headers.origin || '');
+      const app = !!origin && APP_ORIGINS.has(origin);
+      if (app) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+      }
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204, app ? { 'Access-Control-Allow-Methods': 'GET, POST', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Synapse, X-Synapse-Jeton', 'Access-Control-Max-Age': '7200' } : {});
+        return res.end();
+      }
     }
     // vérification de santé de l'hébergeur : quelle que soit l'adresse utilisée
     if (pathname === '/api/health') return json(req, res, 200, { ok: true, proto: PROTO });

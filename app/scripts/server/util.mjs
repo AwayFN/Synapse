@@ -103,7 +103,8 @@ export function json(req, res, status, obj, extra = {}) {
   if (body.length > 8192 && /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''))) {
     body = zlib.gzipSync(body, { level: 6 });
     headers['Content-Encoding'] = 'gzip';
-    headers.Vary = 'Accept-Encoding';
+    // (« Origin » déjà là pour l'application Android : on garde les deux)
+    headers.Vary = res.getHeader('Vary') ? `${res.getHeader('Vary')}, Accept-Encoding` : 'Accept-Encoding';
   }
   headers['Content-Length'] = body.length;
   res.writeHead(status, headers);

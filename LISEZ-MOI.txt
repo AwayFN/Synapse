@@ -1,10 +1,12 @@
-﻿SYNAPSE · ton réseau personnel en 3D (V6)
+﻿SYNAPSE · ton réseau personnel en 3D (V7)
 =========================================
 
 Sur PC : double-clique sur « Lancer Synapse ».
-Sur téléphone Android : installe l'application (voir plus bas).
+Sur téléphone Android : installe l'application (voir plus bas). Elle
+marche toute seule, sans PC, même sans réseau.
 Première ouverture : crée ton compte (prénom, e-mail, mot de passe), ou
-connecte-toi avec celui que tu as déjà.
+connecte-toi avec celui que tu as déjà (celui de ton téléphone, par
+exemple : tu retrouves tout).
 
 - Synapse a besoin de Node.js sur le PC (gratuit, version LTS) : nodejs.org
 - Si Windows demande « Voulez-vous exécuter ce fichier ? » : Exécuter.
@@ -18,10 +20,14 @@ Ton compte, sur tous tes appareils
 - La première chose à faire en ouvrant Synapse : créer ton compte. Ensuite
   c'est bon : tu restes connecté sur cet appareil.
 - Ton prénom en haut à droite > Session > « Se déconnecter » : il faudra se
-  reconnecter avec ton e-mail et ton mot de passe.
+  reconnecter avec ton e-mail et ton mot de passe (sur le téléphone, plus
+  rien de ton compte n'y reste).
 - Le même compte sur ton PC et ton téléphone : tout se synchronise en
   direct. Ce que tu écris sur l'un apparaît sur l'autre en une seconde,
   sans rien relancer, sans se déconnecter.
+- Tu as commencé sur ton téléphone ? Installe Synapse sur ton PC et
+  connecte-toi avec le même e-mail et le même mot de passe : tout ce que
+  tu as fait sur le téléphone est là.
 - Le réseau change (Wi-Fi <-> câble <-> 4G/5G), une coupure, une mise en
   veille : la connexion repart toute seule. Ce que tu modifies pendant une
   coupure est gardé, et part dès que la connexion revient.
@@ -34,18 +40,33 @@ L'application Android
 2. Ouvre le fichier « Synapse.apk ». Android demande d'autoriser
    l'installation d'applications inconnues : autorise ton navigateur,
    puis Installer.
-3. Ouvre Synapse (l'icône du neurone néon) et connecte-toi.
+3. Ouvre Synapse (l'icône du neurone néon) : crée ton compte, ou
+   connecte-toi.
+- Pas besoin de PC : l'application contient Synapse tout entier. Elle
+  marche toute seule sur le téléphone, même sans réseau, et même quand le
+  PC qui héberge le Synapse central est éteint. Ton cerveau est gardé sur
+  le téléphone et se synchronise avec ton compte dès que possible.
+- Premier lancement sans réseau (ou Synapse central éteint) : crée quand
+  même ton compte, tu commences tout de suite. Il est enregistré tout seul
+  dès que le Synapse central répond, avec tout ce que tu as fait (il te
+  demandera peut-être d'accepter ses conditions : un appui suffit).
+- Le point à côté de ton prénom (en haut à droite) : vert = synchronisé ;
+  orange = hors ligne, tes modifications attendent et partiront toutes
+  seules. Détails : ton prénom > Application Android.
 - Le bouton retour du téléphone fait comme la touche Échap : il ferme ce
   qui est ouvert.
 - L'application te prévient quand une nouvelle version existe. Si Android
-  refuse de l'installer par-dessus l'ancienne : désinstalle Synapse, puis
-  installe la nouvelle (ton compte et tes données sont sur le serveur,
-  rien n'est perdu).
+  refuse de l'installer par-dessus l'ancienne : vérifie que le point est
+  vert (tout est sur le serveur), désinstalle Synapse, installe la
+  nouvelle, puis reconnecte-toi.
 
 Ce que tu y trouves
 -------------------
 - Tes projets, tâches, notes et créneaux, reliés dans un réseau en 3D
   où tu voles au milieu de tes idées (molette, clic droit, Z Q S D).
+- Trop loin dans l'espace ? Le petit bouton rond à côté de « Créer ·
+  chercher » (ou la touche H) te ramène devant tes neurones presque
+  instantanément. Il s'allume quand tu t'es éloigné.
 - Écrire en grand : une note s'ouvre sur presque tout l'écran (comme le
   Bloc-notes), et la description d'une tâche, d'un projet ou d'un
   créneau aussi (« Écrire en grand » dans sa fiche). En bas : la ligne,
@@ -81,10 +102,11 @@ Tab              emploi du temps      Maj+Tab   tâches
 
 Le Synapse central
 ------------------
-Tous les comptes vivent sur un seul serveur : le Synapse central, sur le
-PC du créateur. Les applications (téléphones, autres PC) s'y connectent.
-- Ce PC doit rester allumé, avec l'accès Internet ouvert (Espace admin >
-  Serveur, ou bouton « Partager »).
+Les comptes vivent sur un serveur : le Synapse central, sur le PC du
+créateur. Les applications (téléphones, autres PC) s'y synchronisent.
+- Ce PC a l'accès Internet ouvert (Espace admin > Serveur, ou bouton
+  « Partager »). Quand il est éteint, les téléphones continuent avec leur
+  copie du cerveau, et tout se synchronise dès qu'il revient.
 - Son adresse Internet gratuite change à chaque redémarrage de Synapse :
   il la publie tout seul sur GitHub (dépôt AwayFN/Synapse, branche
   synapse-adresse). Les applications la retrouvent toutes seules, sans se
@@ -98,11 +120,14 @@ Partager ton cerveau
 Bouton « Partager », en haut à droite :
 1. Le prénom de la personne (facultatif), puis ce qu'elle peut faire :
    « Peut modifier » ou « Peut seulement regarder ».
-2. « Créer le lien d'invitation », puis envoie-le (SMS, WhatsApp…).
+2. « Créer le lien d'invitation », puis envoie-le (SMS, WhatsApp…). Sur
+   le téléphone, « Envoyer… » ouvre directement le menu de partage.
+- Tu as reçu un lien ? Ouvre-le, ou dans l'application : ton prénom >
+  « Rejoindre le cerveau d'un ami » > colle le lien (ou le message).
 - Une seule personne écrit à la fois dans une même note : les autres
   la voient en lecture seule, avec son prénom, jusqu'à ce qu'elle ait
   fini.
-- Les éléments marqués 🔒 privé (case dans leur fiche) ne sont jamais
+- Les éléments marqués « privé » (case dans leur fiche) ne sont jamais
   montrés aux personnes invitées.
 
 Les comptes et les admins
@@ -121,6 +146,8 @@ Tes données
 -----------
 - Sur le Synapse central : %APPDATA%\Synapse : un dossier par cerveau,
   avec une sauvegarde par jour (14 jours).
+- Sur le téléphone : une copie de ton cerveau, pour qu'il marche sans
+  réseau (effacée à « Se déconnecter »).
 - Exporter : Ctrl+K, puis « Exporter mes données » (sur le téléphone : le
   fichier va dans Téléchargements).
 - Mettre Synapse en ligne pour tout le monde, même PC éteint : lis

@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!--
+      Synapse est dans l'application (V7) : il marche sans réseau. INTERNET sert à se synchroniser avec le Synapse central.
       usesCleartextTraffic : un serveur Synapse sur le même Wi-Fi a une adresse en http (ex. http://192.168.1.20:5173).
       Le Synapse central, lui, passe par https.
     -->

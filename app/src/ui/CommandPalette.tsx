@@ -110,7 +110,7 @@ function Palette() {
       { kind: 'cmd', id: 'tasks', label: 'Vue tâches · kanban', hint: '⇧TAB', run: () => ui.setView('tasks') },
       { kind: 'cmd', id: 'notes', label: 'Vue notes · toutes les notes, indépendantes ou par projet', run: () => ui.setView('notes') },
       { kind: 'cmd', id: 'network', label: 'Vue réseau', hint: 'ÉCHAP', run: () => ui.setView('network') },
-      { kind: 'cmd', id: 'overview', label: "Vue d'ensemble · recentrer la caméra", hint: 'H', run: () => { ui.setView('network'); fx.emit({ kind: 'overview' }); } },
+      { kind: 'cmd', id: 'overview', label: "Revenir aux neurones · vue d'ensemble", hint: 'H', run: () => { ui.setView('network'); fx.emit({ kind: 'home' }); } },
       { kind: 'cmd', id: 'newnote', label: 'Nouvelle note vide', hint: 'CTRL N', run: () => newNote() },
       { kind: 'cmd', id: 'export', label: 'Exporter mes données (JSON)', run: exportData },
       { kind: 'cmd', id: 'import', label: 'Importer des données (JSON)', run: importData },

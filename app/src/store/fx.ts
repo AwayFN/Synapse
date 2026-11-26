@@ -8,7 +8,9 @@ export type FxEvent =
   | { kind: 'touch'; id: string }
   | { kind: 'link'; a: string; b: string }
   | { kind: 'death'; id: string }
-  | { kind: 'overview' };
+  | { kind: 'overview' }
+  /** le bouton « revenir aux neurones » : vue d'ensemble presque instantanée, même de très loin */
+  | { kind: 'home' };
 
 type Listener = (e: FxEvent) => void;
 const listeners = new Set<Listener>();

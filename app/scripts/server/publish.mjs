@@ -153,7 +153,7 @@ export class Publisher {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'synapse-adresse-'));
     try {
       const file = path.join(tmp, FILE);
-      const body = { app: 'synapse', adresse: url, proto: 6, maj: new Date().toISOString() };
+      const body = { app: 'synapse', adresse: url, proto: 7, maj: new Date().toISOString() };
       fs.writeFileSync(file, JSON.stringify(body, null, 2) + '\n');
       const opts = { cwd: this.repo, env: { ...env, GIT_INDEX_FILE: path.join(tmp, 'index') } };
       const blob = await run(['hash-object', '-w', file], opts);

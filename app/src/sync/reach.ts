@@ -1,5 +1,7 @@
 import { api, ApiError } from './client';
 import { linkBases, useSession, type ShareStatus } from './session';
+import { canShareText, openExternal, shareText } from './native';
+import { standalone } from './remote';
 
 /**
  * « Comment les autres me rejoignent » : une adresse joignable pour les liens (invitations, QR code).
@@ -75,6 +77,8 @@ export function linkFrom(text: string): { url: URL; problem?: string } | null {
 
 /** Ouvre le Synapse d'un ami dans une autre fenêtre (le tien reste ouvert) */
 export function openLink(url: URL) {
+  // application Android : un autre serveur Synapse s'ouvre dans le navigateur du téléphone
+  if (standalone()) return openExternal(url.toString());
   if (url.origin === location.origin) {
     location.assign(url.toString());
     return;
@@ -88,13 +92,16 @@ export function openLink(url: URL) {
   a.remove();
 }
 
-/** Envoyer par le menu de partage du téléphone (WhatsApp, SMS…), quand il existe */
-export const canNativeShare = () => typeof navigator !== 'undefined' && typeof navigator.share === 'function' && window.matchMedia('(pointer: coarse)').matches;
+/** Envoyer par le menu de partage du téléphone (WhatsApp, SMS…), quand il existe (application Android : toujours) */
+export const canNativeShare = canShareText;
 
-export async function nativeShare(text: string) {
-  try {
-    await navigator.share({ title: 'Synapse', text });
-  } catch {
-    /* fermé par la personne */
-  }
+export const nativeShare = shareText;
+
+/**
+ * Un lien d'invitation à un cerveau (« …/#invite=… ») : son jeton. Le jeton vit sur le serveur, pas dans l'adresse :
+ * dans l'application Android, il marche même si l'adresse du Synapse central a changé depuis l'envoi du lien.
+ */
+export function inviteTokenOf(url: URL): string | null {
+  const m = url.hash.match(/(?:^#|&)invite=([A-Za-z0-9_.-]{8,160})/);
+  return m ? m[1] : null;
 }
