@@ -2,22 +2,22 @@ import { useEffect, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { layout } from './layout';
-import { labelHover, telemetry } from './telemetry';
+import { grab, labelHover, telemetry } from './telemetry';
 import { useUI } from '../store/ui';
 import { fx } from '../store/fx';
-import { useSession } from '../sync/session';
 
 export function isTyping() {
   const el = document.activeElement as HTMLElement | null;
   if (!el) return false;
   const tag = el.tagName;
+  // un curseur (réglages du réseau) n'est pas une saisie : les flèches et ZQSD restent à la caméra… sauf s'il a le focus
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
 }
 
+/** Une vue, l'éditeur ou la barre de commande couvrent le réseau (les réglages du réseau, eux, le laissent voir) */
 export function overlayOpen() {
   const s = useUI.getState();
-  const ss = useSession.getState();
-  return s.view !== 'network' || !!s.editorId || s.paletteOpen || ss.adminOpen || ss.accountOpen || ss.feedbackOpen || ss.shareOpen;
+  return s.view !== 'network' || !!s.editorId || s.paletteOpen;
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -37,12 +37,18 @@ function smoothDamp(cur: THREE.Vector3, target: THREE.Vector3, vel: THREE.Vector
 
 type Mode = 'free' | 'focus' | 'point';
 
+/** Au doigt : un appui long sur un neurone (sans bouger) le prend en main */
+const LONG_PRESS_MS = 380;
+let dropHintShown = false;
+
 /**
  * "Floating in space" camera:
  *  - free mode: wheel = forward/back with inertia, right-drag = pivot (look around),
  *    left-drag = drift, WASD/ZQSD + E/Q = fly, mouse position = gentle parallax float
  *  - focus mode: orbit around the selected constellation (follows it as it breathes)
  *  - point mode: smooth flight to a viewpoint (overview), then back to free
+ * V8 : glisser un neurone (souris), ou appui long puis glisser (doigt), le déplace ; lâché, il reste là (posé à la
+ * main). Pendant qu'on le tient, la molette l'éloigne ou le rapproche. Glisser dans le vide dérive, comme avant.
  */
 class Rig {
   cam: THREE.PerspectiveCamera;
@@ -62,7 +68,10 @@ class Rig {
   mouse = new THREE.Vector2();
   float = new THREE.Vector2();
   pointerIn = false;
-  drag: { button: number; x: number; y: number; moved: number } | null = null;
+  /** bouton enfoncé ; grab : le neurone sous le pointeur au départ (glisser le déplace au lieu de dériver) */
+  drag: { button: number; x: number; y: number; moved: number; grab: string | null } | null = null;
+  /** le neurone tenu en main : il suit le pointeur à cette profondeur (distance devant la caméra) */
+  grabbing: { id: string; depth: number } | null = null;
   shift = 0;
   booted = false;
   speedScale = 1;
@@ -228,8 +237,66 @@ class Rig {
     this.vel.addScaledVector(right, -dx * k).addScaledVector(up, dy * k);
   }
 
+  // ───────────────────────── déplacer un neurone à la main
+
+  /** Prend le neurone en main : il suivra le pointeur à sa distance actuelle devant la caméra */
+  beginGrab(id: string): boolean {
+    if (overlayOpen()) return false;
+    const n = layout.nodes.get(id);
+    if (!n || n.birth < 0.5 || !layout.grabStart(id)) return false;
+    const fwd = this.v1.set(0, 0, -1).applyQuaternion(this.cam.quaternion);
+    const depth = this.v2.subVectors(n.render, this.cam.position).dot(fwd);
+    this.grabbing = { id, depth: Math.max(4, depth) };
+    grab.id = id;
+    n.flash = Math.max(n.flash, 0.8);
+    // la caméra ne suit plus ce neurone pendant qu'on le déplace (elle reste où elle est)
+    if (this.focusId === id || useUI.getState().focusId === id) this.releaseFocus();
+    this.vel.set(0, 0, 0);
+    useUI.getState().setHovered(id);
+    return true;
+  }
+
+  /** L'endroit, sous le pointeur, à la profondeur du neurone tenu */
+  private grabTarget(): THREE.Vector3 | null {
+    const g = this.grabbing;
+    if (!g) return null;
+    this.ray.setFromCamera(this.mouse, this.cam);
+    const fwd = this.v1.set(0, 0, -1).applyQuaternion(this.cam.quaternion);
+    const denom = this.ray.ray.direction.dot(fwd);
+    if (denom < 0.05) return null;
+    return this.v2.copy(this.ray.ray.origin).addScaledVector(this.ray.ray.direction, g.depth / denom);
+  }
+
+  moveGrab() {
+    const t = this.grabTarget();
+    if (t) layout.grabMove(t);
+  }
+
+  /** Lâché : le neurone reste exactement là (gardé sur l'appareil) */
+  endGrab() {
+    const g = this.grabbing;
+    if (!g) return;
+    this.moveGrab();
+    layout.grabEnd(true);
+    this.grabbing = null;
+    grab.id = null;
+    grab.endedAt = performance.now();
+    const n = layout.nodes.get(g.id);
+    if (n) n.flash = Math.max(n.flash, 0.6);
+    if (!dropHintShown) {
+      dropHintShown = true;
+      useUI.getState().toast({ text: 'NEURONE POSÉ · IL RESTE LÀ · « LIBÉRER » DANS SA FICHE', color: '#00e5ff' }, 4200);
+    }
+  }
+
   wheel(dy: number) {
     const d = THREE.MathUtils.clamp(dy, -240, 240);
+    // un neurone tenu : la molette l'éloigne ou le rapproche
+    if (this.grabbing) {
+      this.grabbing.depth = THREE.MathUtils.clamp(this.grabbing.depth * Math.exp(d * 0.0012), 6, 2400);
+      this.moveGrab();
+      return;
+    }
     if (this.mode === 'free') {
       const fwd = this.v1.set(0, 0, -1).applyQuaternion(this.baseQuat);
       this.vel.addScaledVector(fwd, -d * 0.045 * this.speedScale * 2.2);
@@ -242,6 +309,8 @@ class Rig {
 
   click() {
     if (overlayOpen()) return;
+    // on vient de lâcher un neurone : ce n'est pas un clic
+    if (performance.now() - grab.endedAt < 300) return;
     const ui = useUI.getState();
     if (ui.hoveredId) ui.openEntity(ui.hoveredId);
     else if (ui.selectedId) ui.closePanel();
@@ -303,30 +372,75 @@ class Rig {
     this.el = el;
     const inUI = (t: EventTarget | null) => !!(t as HTMLElement | null)?.closest?.('[data-ui]');
 
+    /** Le neurone d'une étiquette (son titre) sous le pointeur, s'il y en a une */
+    const labelIdOf = (t: EventTarget | null) => (t as HTMLElement | null)?.closest?.<HTMLElement>('[data-label]')?.dataset.labelId ?? null;
+    const setMouse = (e: { clientX: number; clientY: number }) => {
+      const r = el.getBoundingClientRect();
+      this.mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -(((e.clientY - r.top) / r.height) * 2 - 1));
+    };
+    const capture = (id: number) => {
+      try {
+        el.setPointerCapture(id);
+      } catch {
+        /* ignore */
+      }
+    };
+
     // ── au doigt (téléphone, tablette) : un doigt = tourner · pincer = avancer / reculer · deux doigts = se déplacer
     //    toucher = ouvrir l'élément (ou refermer) · double toucher dans le vide = vue d'ensemble
+    //    appui long sur un neurone (ou son nom) = le prendre en main, puis glisser pour le déplacer
     const touches = new Map<number, { x: number; y: number }>();
     let pinch: { d: number; mx: number; my: number } | null = null;
-    let tap: { t: number; moved: number } | null = null;
+    let tap: { t: number; moved: number; label: boolean } | null = null;
+    let press: { id: string; pointerId: number; timer: number } | null = null;
     let lastTap = 0;
     let lastTouchAt = 0;
+    const cancelPress = () => {
+      if (!press) return;
+      window.clearTimeout(press.timer);
+      press = null;
+    };
     const two = () => {
       const [a, b] = [...touches.values()];
       return { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
     };
-    const touchDown = (e: PointerEvent) => {
+    const touchDown = (e: PointerEvent, labelId: string | null) => {
       lastTouchAt = performance.now();
+      // un neurone déjà tenu : un deuxième doigt ne change rien
+      if (this.grabbing) return;
       touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (touches.size === 1) tap = { t: performance.now(), moved: 0 };
-      else {
+      if (touches.size === 1) {
+        tap = { t: performance.now(), moved: 0, label: !!labelId };
+        setMouse(e);
+        const id = labelId ?? (overlayOpen() ? null : this.pickAt(1.8));
+        if (id) {
+          const pointerId = e.pointerId;
+          press = {
+            id,
+            pointerId,
+            timer: window.setTimeout(() => {
+              const p = press;
+              press = null;
+              if (!p || touches.size !== 1 || !touches.has(p.pointerId)) return;
+              if (this.beginGrab(p.id)) {
+                tap = null;
+                capture(p.pointerId);
+                try {
+                  navigator.vibrate?.(12);
+                } catch {
+                  /* pas de vibreur */
+                }
+              }
+            }, LONG_PRESS_MS),
+          };
+        }
+      } else {
         tap = null;
+        cancelPress();
         if (touches.size === 2) pinch = two();
       }
-      try {
-        el.setPointerCapture(e.pointerId);
-      } catch {
-        /* ignore */
-      }
+      // sur une étiquette, le doigt reste à elle (un simple toucher l'ouvre) ; ailleurs, la scène le suit
+      if (!labelId) capture(e.pointerId);
     };
     const touchMove = (e: PointerEvent) => {
       const p = touches.get(e.pointerId);
@@ -336,8 +450,15 @@ class Rig {
       const dy = e.clientY - p.y;
       p.x = e.clientX;
       p.y = e.clientY;
+      if (this.grabbing) {
+        setMouse(e);
+        this.moveGrab();
+        return;
+      }
       if (touches.size === 1) {
         if (tap) tap.moved += Math.abs(dx) + Math.abs(dy);
+        // le doigt bouge avant l'appui long : on tourne, comme avant
+        if (press && (!tap || tap.moved > 8)) cancelPress();
         if (!tap || tap.moved > 8) this.touchOrbit(dx, dy);
       } else if (touches.size === 2 && pinch) {
         const now = two();
@@ -349,18 +470,28 @@ class Rig {
       }
     };
     const touchUp = (e: PointerEvent) => {
-      if (!touches.has(e.pointerId)) return;
+      if (!touches.has(e.pointerId)) {
+        // le doigt qui tenait le neurone (un deuxième doigt n'est jamais compté)
+        if (this.grabbing && touches.size === 0) this.endGrab();
+        return;
+      }
       lastTouchAt = performance.now();
       touches.delete(e.pointerId);
+      if (press?.pointerId === e.pointerId) cancelPress();
       try {
         el.releasePointerCapture(e.pointerId);
       } catch {
         /* ignore */
       }
+      if (this.grabbing) {
+        if (touches.size === 0) this.endGrab();
+        tap = null;
+        return;
+      }
       if (touches.size < 2) pinch = null;
-      if (touches.size === 0 && tap && e.type === 'pointerup' && tap.moved < 10 && performance.now() - tap.t < 450) {
-        const r = el.getBoundingClientRect();
-        this.mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -(((e.clientY - r.top) / r.height) * 2 - 1));
+      // sur une étiquette, c'est elle qui ouvre son élément (son propre clic)
+      if (touches.size === 0 && tap && !tap.label && e.type === 'pointerup' && tap.moved < 10 && performance.now() - tap.t < 450) {
+        setMouse(e);
         const hit = overlayOpen() ? null : this.pickAt(1.8);
         useUI.getState().setHovered(hit);
         const now = performance.now();
@@ -373,23 +504,22 @@ class Rig {
 
     const onDown = (e: PointerEvent) => {
       if (inUI(e.target)) return;
-      if (e.pointerType === 'touch') {
-        if ((e.target as HTMLElement).closest('[data-label]')) return;
-        return touchDown(e);
+      const labelId = labelIdOf(e.target);
+      if (e.pointerType === 'touch') return touchDown(e, labelId);
+      if (e.button === 0 && labelId) {
+        // le nom d'un neurone : un clic l'ouvre (son propre clic), glisser le déplace
+        this.drag = { button: 0, x: e.clientX, y: e.clientY, moved: 0, grab: labelId };
+        return;
       }
-      if (e.button === 0 && (e.target as HTMLElement).closest('[data-label]')) return;
-      this.drag = { button: e.button, x: e.clientX, y: e.clientY, moved: 0 };
-      try {
-        el.setPointerCapture(e.pointerId);
-      } catch {
-        /* ignore */
-      }
+      // glisser un neurone le déplace ; glisser dans le vide dérive, comme avant
+      const grabId = e.button === 0 && !overlayOpen() ? useUI.getState().hoveredId : null;
+      this.drag = { button: e.button, x: e.clientX, y: e.clientY, moved: 0, grab: grabId };
+      capture(e.pointerId);
     };
     const onMove = (e: PointerEvent) => {
       if (e.pointerType === 'touch') return touchMove(e);
-      const r = el.getBoundingClientRect();
-      this.mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -(((e.clientY - r.top) / r.height) * 2 - 1));
-      this.pointerIn = !inUI(e.target);
+      setMouse(e);
+      this.pointerIn = !inUI(e.target) || !!this.grabbing;
       const d = this.drag;
       if (!d) return;
       const dx = e.clientX - d.x;
@@ -397,8 +527,14 @@ class Rig {
       d.x = e.clientX;
       d.y = e.clientY;
       d.moved += Math.abs(dx) + Math.abs(dy);
+      if (this.grabbing) return this.moveGrab();
       if (d.button === 2) this.rotate(dx, dy);
-      else if (d.moved > 4) this.pan(dx, dy);
+      else if (d.grab) {
+        if (d.moved > 5 && this.beginGrab(d.grab)) {
+          capture(e.pointerId);
+          this.moveGrab();
+        } else if (d.moved > 5) d.grab = null;
+      } else if (d.moved > 4) this.pan(dx, dy);
     };
     const onUp = (e: PointerEvent) => {
       if (e.pointerType === 'touch') return touchUp(e);
@@ -409,7 +545,9 @@ class Rig {
       } catch {
         /* ignore */
       }
-      if (d && d.button === 0 && d.moved < 5) this.click();
+      if (this.grabbing) return this.endGrab();
+      // un clic sur un nom : c'est l'étiquette qui ouvre son élément
+      if (d && d.button === 0 && d.moved < 5 && !labelIdOf(e.target)) this.click();
     };
     const onWheel = (e: WheelEvent) => {
       if (inUI(e.target)) return;
@@ -441,7 +579,13 @@ class Rig {
       }
     };
     const onKeyUp = (e: KeyboardEvent) => this.keys.delete(e.code);
-    const onBlur = () => this.keys.clear();
+    const onBlur = () => {
+      this.keys.clear();
+      // la fenêtre perd la main pendant un déplacement : le neurone reste où il est
+      cancelPress();
+      if (this.grabbing) this.endGrab();
+      this.drag = null;
+    };
     el.addEventListener('pointerdown', onDown);
     el.addEventListener('pointermove', onMove);
     el.addEventListener('pointerup', onUp);
@@ -454,6 +598,7 @@ class Rig {
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('blur', onBlur);
     return () => {
+      cancelPress();
       el.removeEventListener('pointerdown', onDown);
       el.removeEventListener('pointermove', onMove);
       el.removeEventListener('pointerup', onUp);
@@ -576,8 +721,18 @@ class Rig {
     else if (this.cam.view?.enabled) this.cam.clearViewOffset();
     this.cam.updateMatrixWorld();
 
+    // un neurone tenu en main suit le pointeur (même si la caméra bouge encore un peu)
+    if (this.grabbing) {
+      if (!layout.nodes.has(this.grabbing.id)) {
+        this.grabbing = null;
+        grab.id = null;
+      } else {
+        this.moveGrab();
+        ui.setHovered(this.grabbing.id);
+      }
+    }
     // picking: label hover wins, else ray vs constellation spheres
-    if (!this.drag || this.drag.moved < 4) {
+    else if (!this.drag || this.drag.moved < 4) {
       let hit: string | null = labelHover.id;
       if (!hit && this.pointerIn && !overlayOpen()) {
         this.ray.setFromCamera(this.mouse, this.cam);
@@ -598,7 +753,7 @@ class Rig {
       }
       ui.setHovered(hit);
     }
-    const cursor = this.drag && this.drag.moved > 4 ? 'grabbing' : ui.hoveredId ? 'pointer' : 'default';
+    const cursor = this.grabbing || (this.drag && this.drag.moved > 4) ? 'grabbing' : ui.hoveredId ? 'pointer' : 'default';
     if (cursor !== this.cursor && this.el) {
       this.cursor = cursor;
       this.el.style.cursor = cursor;

@@ -1,8 +1,9 @@
 import { memo, useCallback, type CSSProperties } from 'react';
 import { displayTitle, useData, type DataState } from '../store/data';
 import { useUI } from '../store/ui';
+import { useNetwork } from '../store/network';
 import { useStructure } from '../scene/structure';
-import { labelEls, labelHover, reticle } from '../scene/telemetry';
+import { grab, labelEls, labelHover, reticle } from '../scene/telemetry';
 import { rgbTriplet } from '../lib/color';
 import { shortCode } from '../lib/random';
 import { excerpt, wordCount } from '../lib/text';
@@ -39,6 +40,7 @@ function subline(s: DataState, id: string): string {
     case 'note': {
       const parts: string[] = [];
       if (e.projectId && s.entities[e.projectId]) parts.push(`↳ ${displayTitle(s.entities[e.projectId])}`);
+      if (e.date) parts.push(`${fmtDay(e.date)}${e.time != null ? ' ' + fmtTime(e.time) : ''}`);
       const tags = tagsOf(e);
       parts.push(tags.length ? tags.map((t) => `#${t}`).join(' ') : `${wordCount(e.content)} mots`);
       return parts.join(' · ');
@@ -70,6 +72,7 @@ const Label = memo(function Label({ id }: { id: string }) {
   const sub = useData((s) => subline(s, id));
   const text = useData((s) => cardText(s, id));
   const links = useData((s) => linkCount(s, id));
+  const pinned = useNetwork((s) => !!s.pinned[id]);
   const ref = useCallback(
     (el: HTMLDivElement | null) => {
       if (el) labelEls.set(id, el);
@@ -80,7 +83,14 @@ const Label = memo(function Label({ id }: { id: string }) {
   if (!e) return null;
   const done = (e.type === 'task' || e.type === 'project') && e.status === 'done';
   return (
-    <div ref={ref} className={`lbl${done ? ' is-done' : ''}`} data-label style={{ '--c': rgbTriplet(e.color) } as CSSProperties}>
+    <div
+      ref={ref}
+      className={`lbl${done ? ' is-done' : ''}`}
+      data-label
+      data-label-id={id}
+      data-pinned={pinned ? '1' : '0'}
+      style={{ '--c': rgbTriplet(e.color) } as CSSProperties}
+    >
       <i className="lbl-tick" />
       <div className="lbl-body">
         <div
@@ -90,6 +100,8 @@ const Label = memo(function Label({ id }: { id: string }) {
             if (labelHover.id === id) labelHover.id = null;
           }}
           onClick={() => {
+            // on vient de lâcher ce neurone (déplacé par son nom) : ce n'est pas un clic
+            if (performance.now() - grab.endedAt < 300) return;
             labelHover.id = null;
             useUI.getState().openEntity(id);
           }}
@@ -97,6 +109,11 @@ const Label = memo(function Label({ id }: { id: string }) {
           <span className="lbl-type">{TYPE_TAG[e.type]}</span>
           {done && <span className="lbl-check">✓</span>}
           {displayTitle(e)}
+          {pinned && (
+            <span className="lbl-pin" title="Posé à la main">
+              ◆
+            </span>
+          )}
         </div>
         <div className="lbl-sub">{sub}</div>
         <div className="lbl-card">

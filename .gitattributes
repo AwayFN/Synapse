@@ -1,3 +1,2 @@
-# Les fichiers restent identiques octet pour octet sur tous les ordinateurs : le lanceur reconnaît alors
-# que l'application compilée (app/dist) est à jour et n'a rien à recompiler.
+# Les fichiers restent identiques octet pour octet sur tous les ordinateurs (pas de conversion des fins de ligne).
 * -text

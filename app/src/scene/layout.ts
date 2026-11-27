@@ -2,8 +2,9 @@ import * as THREE from 'three';
 import type { EntityType } from '../types';
 import type { Edge } from '../store/graph';
 import { fx } from '../store/fx';
+import { useNetwork } from '../store/network';
+import { readJson, writeKey } from '../store/storage';
 import { hashString, mulberry32 } from '../lib/random';
-import { isMemoryOnly } from '../store/storage';
 
 /** Visual radius of a constellation per entity type (world units) */
 export const RADIUS: Record<EntityType, number> = { project: 9.6, note: 7, task: 5.2, slot: 5.6 };
@@ -33,27 +34,34 @@ export interface LNode {
   done: number;
 }
 
+/** Ce qu'on exporte (et qu'on réimporte) : la place de chaque neurone, et ceux posés à la main */
+export interface Placement {
+  positions: Record<string, [number, number, number]>;
+  pinned: string[];
+}
+
 const POS_KEY = 'synapse-layout';
 
-// force constants (tuned by eye) — plus d'espace entre les neurones : répulsion plus forte, gravité plus douce,
-// liens plus longs (environ 1,6 fois les distances de la première version)
+// force constants (tuned by eye) — V7 : plus d'espace entre les neurones (environ 1,6 fois la première version).
+// V8 : ces distances sont multipliées par les deux réglages du réseau (neurones liés / non liés, 0,85 par défaut).
 const K_REP = 8000;
 const K_GRAV = 0.28;
 const DAMP = 2.4;
 const MAX_V = 36;
-/** longueur au repos des liens : tâche/créneau → projet, et liens libres */
+/** longueur au repos des liens : tâche/créneau/note → projet, et liens libres */
 const REST_PARENT = 20;
 const REST_LINK = 30;
 const REST_SCALE_PARENT = 1.2;
 const REST_SCALE_LINK = 1.5;
 
 function loadSaved(): Record<string, [number, number, number]> {
-  try {
-    const raw = localStorage.getItem(POS_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
+  const raw = readJson<Record<string, unknown>>(POS_KEY, {});
+  const out: Record<string, [number, number, number]> = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [id, p] of Object.entries(raw)) {
+    if (Array.isArray(p) && p.length >= 3 && p.slice(0, 3).every((x) => typeof x === 'number' && Number.isFinite(x))) out[id] = [p[0], p[1], p[2]];
   }
+  return out;
 }
 
 function randomUnit(rng: () => number, out = new THREE.Vector3()) {
@@ -71,6 +79,8 @@ class Layout {
   edgeIdx = new Int32Array(0);
   /** called to place a fresh constellation in front of the camera */
   spawnPoint: (() => THREE.Vector3) | null = null;
+  /** le neurone tenu en main en ce moment (souris ou doigt) : les forces ne le bougent pas */
+  grabbed: string | null = null;
 
   private hints = new Map<string, string | null>();
   private saved = loadSaved();
@@ -79,6 +89,13 @@ class Layout {
   private ax = new Float32Array(0);
   private ay = new Float32Array(0);
   private az = new Float32Array(0);
+  /** voisins directs (i * n + j) : leur répulsion suit le réglage « neurones liés » */
+  private adj = new Uint8Array(0);
+  private adjSet: Set<number> | null = null;
+  private fixed = new Uint8Array(0);
+  /** respiration du réseau (le dernier pas) : pour qu'un neurone tenu en main reste exactement sous le doigt */
+  private breath = 1;
+  private time = 0;
 
   constructor() {
     fx.on((e) => {
@@ -91,9 +108,11 @@ class Layout {
   }
 
   sync(items: { id: string; type: EntityType }[], edges: Edge[]) {
-    const boot = !this.initialized;
+    const boot = !this.initialized || this.rebootFrames > 0;
+    this.rebootFrames = 0;
     const ids = new Set(items.map((i) => i.id));
     for (const id of [...this.nodes.keys()]) if (!ids.has(id)) this.nodes.delete(id);
+    if (this.grabbed && !ids.has(this.grabbed)) this.grabbed = null;
 
     let fromSaved = 0;
     items.forEach((it, i) => {
@@ -112,21 +131,33 @@ class Layout {
     this.edges = edges;
     const index = new Map(this.list.map((n, i) => [n.id, i]));
     this.edgeIdx = new Int32Array(edges.length * 2);
-    edges.forEach((e, i) => {
-      this.edgeIdx[i * 2] = index.get(e.a) ?? -1;
-      this.edgeIdx[i * 2 + 1] = index.get(e.b) ?? -1;
+    const n = this.list.length;
+    const dense = n <= 1500;
+    this.adj = dense ? new Uint8Array(n * n) : new Uint8Array(0);
+    this.adjSet = dense ? null : new Set<number>();
+    edges.forEach((e, k) => {
+      const a = index.get(e.a) ?? -1;
+      const b = index.get(e.b) ?? -1;
+      this.edgeIdx[k * 2] = a;
+      this.edgeIdx[k * 2 + 1] = b;
+      if (a < 0 || b < 0) return;
+      const lo = Math.min(a, b);
+      const hi = Math.max(a, b);
+      if (dense) this.adj[lo * n + hi] = 1;
+      else this.adjSet!.add(lo * n + hi);
     });
-    if (this.ax.length !== this.list.length) {
-      this.ax = new Float32Array(this.list.length);
-      this.ay = new Float32Array(this.list.length);
-      this.az = new Float32Array(this.list.length);
+    if (this.ax.length !== n) {
+      this.ax = new Float32Array(n);
+      this.ay = new Float32Array(n);
+      this.az = new Float32Array(n);
+      this.fixed = new Uint8Array(n);
     }
     if (boot) {
       this.initialized = true;
       // settle the layout before the first frame (fewer steps if positions were remembered)
       const steps = fromSaved >= items.length * 0.8 ? 60 : 700;
       for (let s = 0; s < steps; s++) this.forces(0.06);
-      for (const n of this.list) n.vel.set(0, 0, 0);
+      for (const node of this.list) node.vel.set(0, 0, 0);
     }
   }
 
@@ -140,7 +171,7 @@ class Layout {
       birth = boot ? -rng() * 0.8 : 0;
     } else if (boot) {
       // fibonacci sphere start, the relaxation does the rest
-      const r = 22 * Math.cbrt(total + 1);
+      const r = 22 * Math.cbrt(total + 1) * useNetwork.getState().unlinked;
       const y = 1 - (2 * (i + 0.5)) / Math.max(total, 1);
       const rad = Math.sqrt(1 - y * y);
       const th = i * 2.399963;
@@ -152,7 +183,7 @@ class Layout {
       this.hints.delete(id);
       const near = hint ? this.nodes.get(hint) : null;
       if (near) {
-        pos.copy(near.pos).add(randomUnit(rng).multiplyScalar(21 + rng() * 6));
+        pos.copy(near.pos).add(randomUnit(rng).multiplyScalar((21 + rng() * 6) * useNetwork.getState().linked));
       } else if (this.spawnPoint) {
         pos.copy(this.spawnPoint()).add(randomUnit(rng).multiplyScalar(2));
       } else {
@@ -180,15 +211,34 @@ class Layout {
     };
   }
 
+  private linked(i: number, j: number, n: number): boolean {
+    const lo = i < j ? i : j;
+    const hi = i < j ? j : i;
+    return this.adjSet ? this.adjSet.has(lo * n + hi) : this.adj[lo * n + hi] === 1;
+  }
+
+  /**
+   * Les forces : chaque neurone repousse les autres, la gravité garde le réseau groupé, chaque lien est un ressort.
+   * Les deux réglages agrandissent ou rapprochent tout le dessin : « liés » change la longueur des ressorts (et la
+   * répulsion entre deux voisins directs), « non liés » la répulsion entre tous les autres. Une répulsion multipliée
+   * par s³ et des ressorts par s donnent exactement le même réseau, à l'échelle s.
+   */
   private forces(dt: number) {
     const L = this.list;
     const n = L.length;
     const { ax, ay, az } = this;
+    const net = useNetwork.getState();
+    const sL = net.linked;
+    const sU = net.unlinked;
+    const repL = K_REP * sL * sL * sL;
+    const repU = K_REP * sU * sU * sU;
+    const pinned = net.pinned;
     for (let i = 0; i < n; i++) {
       const p = L[i].pos;
       ax[i] = -K_GRAV * p.x;
       ay[i] = -K_GRAV * p.y * 1.25; // slightly flattened galaxy
       az[i] = -K_GRAV * p.z;
+      this.fixed[i] = pinned[L[i].id] || L[i].id === this.grabbed ? 1 : 0;
     }
     // many-body repulsion
     for (let i = 0; i < n; i++) {
@@ -199,7 +249,9 @@ class Layout {
         let dy = a.pos.y - b.pos.y;
         let dz = a.pos.z - b.pos.z;
         let d2 = dx * dx + dy * dy + dz * dz;
-        const minD = (a.radius + b.radius) * 0.9;
+        const near = this.linked(i, j, n);
+        const s = near ? sL : sU;
+        const minD = (a.radius + b.radius) * 0.9 * s;
         if (d2 < 1e-6) {
           dx = Math.random() - 0.5;
           dy = Math.random() - 0.5;
@@ -208,7 +260,7 @@ class Layout {
         }
         const d = Math.sqrt(d2);
         const dd = Math.max(d2, minD * minD);
-        const f = (K_REP * a.charge * b.charge) / dd / d;
+        const f = ((near ? repL : repU) * a.charge * b.charge) / dd / d;
         ax[i] += dx * f;
         ay[i] += dy * f;
         az[i] += dz * f;
@@ -226,7 +278,7 @@ class Layout {
       const a = L[i];
       const b = L[j];
       const parent = E[e].kind === 'parent';
-      const rest = parent ? REST_PARENT + (a.radius + b.radius) * REST_SCALE_PARENT : REST_LINK + (a.radius + b.radius) * REST_SCALE_LINK;
+      const rest = (parent ? REST_PARENT + (a.radius + b.radius) * REST_SCALE_PARENT : REST_LINK + (a.radius + b.radius) * REST_SCALE_LINK) * sL;
       const k = parent ? 1.5 : 0.85;
       const dx = b.pos.x - a.pos.x;
       const dy = b.pos.y - a.pos.y;
@@ -241,28 +293,40 @@ class Layout {
       az[j] -= dz * f;
     }
     const damp = Math.exp(-dt * DAMP);
+    const maxV = MAX_V * Math.max(1, sL, sU);
     for (let i = 0; i < n; i++) {
       const v = L[i].vel;
+      // posé à la main (ou tenu en ce moment) : il ne bouge pas, les autres s'organisent autour de lui
+      if (this.fixed[i]) {
+        v.set(0, 0, 0);
+        continue;
+      }
       v.x = (v.x + ax[i] * dt) * damp;
       v.y = (v.y + ay[i] * dt) * damp;
       v.z = (v.z + az[i] * dt) * damp;
       const sp = v.length();
-      if (sp > MAX_V) v.multiplyScalar(MAX_V / sp);
+      if (sp > maxV) v.multiplyScalar(maxV / sp);
       L[i].pos.addScaledVector(v, dt);
     }
   }
 
+  private wobble(n: LNode, t: number, out: THREE.Vector3) {
+    const [a, b, c] = n.phase;
+    return out.set(Math.sin(t * 0.23 + a) * 0.9, Math.sin(t * 0.19 + b) * 0.9, Math.sin(t * 0.21 + c) * 0.9);
+  }
+
+  private tmp = new THREE.Vector3();
+
   step(dt: number, t: number) {
+    if (this.rebootFrames > 0) this.rebootFrames--;
     if (!this.list.length) return;
     this.forces(dt);
     const breath = 1 + 0.018 * Math.sin(t * 0.33);
+    this.breath = breath;
+    this.time = t;
     for (const n of this.list) {
-      const [a, b, c] = n.phase;
-      n.render.set(
-        n.pos.x * breath + Math.sin(t * 0.23 + a) * 0.9,
-        n.pos.y * breath + Math.sin(t * 0.19 + b) * 0.9,
-        n.pos.z * breath + Math.sin(t * 0.21 + c) * 0.9,
-      );
+      this.wobble(n, t, this.tmp);
+      n.render.set(n.pos.x * breath + this.tmp.x, n.pos.y * breath + this.tmp.y, n.pos.z * breath + this.tmp.z);
     }
     this.saveAcc += dt;
     if (this.saveAcc > 5) {
@@ -271,7 +335,36 @@ class Layout {
     }
   }
 
-  /** Position de chaque neurone (envoyée au serveur par le propriétaire) */
+  // ───────────────────────── déplacer un neurone à la main
+
+  grabStart(id: string) {
+    if (!this.nodes.has(id)) return false;
+    this.grabbed = id;
+    return true;
+  }
+
+  /** Le neurone tenu suit le pointeur : `target` est l'endroit où il doit s'afficher (respiration comprise) */
+  grabMove(target: THREE.Vector3) {
+    const n = this.grabbed ? this.nodes.get(this.grabbed) : undefined;
+    if (!n) return;
+    this.wobble(n, this.time, this.tmp);
+    n.pos.copy(target).sub(this.tmp).multiplyScalar(1 / this.breath);
+    n.vel.set(0, 0, 0);
+    n.render.copy(target);
+  }
+
+  /** Lâché : il reste exactement là (posé à la main), et c'est gardé tout de suite */
+  grabEnd(keep: boolean) {
+    const id = this.grabbed;
+    this.grabbed = null;
+    if (!id) return;
+    if (keep) useNetwork.getState().pin(id);
+    this.save();
+  }
+
+  // ───────────────────────── positions gardées sur l'appareil
+
+  /** Position de chaque neurone */
   positions(): Record<string, [number, number, number]> {
     const out: Record<string, [number, number, number]> = {};
     for (const n of this.list) out[n.id] = [+n.pos.x.toFixed(2), +n.pos.y.toFixed(2), +n.pos.z.toFixed(2)];
@@ -279,28 +372,42 @@ class Layout {
   }
 
   save() {
+    if (!this.initialized) return;
     const out = this.positions();
     this.saved = out;
-    // avec un serveur, les positions vivent sur le serveur : rien n'est écrit dans ce navigateur
-    if (isMemoryOnly()) return;
-    try {
-      localStorage.setItem(POS_KEY, JSON.stringify(out));
-    } catch {
-      /* ignore */
-    }
+    writeKey(POS_KEY, JSON.stringify(out));
   }
 
-  /** Positions venues du serveur : l'invité prend celles du propriétaire, le propriétaire complète les siennes */
-  useSavedPositions(pos: Record<string, [number, number, number]>, mode: 'merge' | 'replace') {
-    this.saved = mode === 'replace' ? { ...pos } : { ...this.saved, ...pos };
-    if (mode !== 'replace') return;
-    for (const [id, p] of Object.entries(pos)) {
+  /** La place des neurones, pour l'export (seulement ceux qui existent) */
+  placement(): Placement {
+    const positions = this.initialized ? this.positions() : { ...this.saved };
+    const pinned = Object.keys(useNetwork.getState().pinned).filter((id) => positions[id]);
+    return { positions, pinned };
+  }
+
+  /**
+   * Après un import : le réseau se redispose depuis zéro, avec la place des neurones du fichier s'il la donne (et ceux
+   * qui y étaient posés à la main restent posés) ; puis la caméra montre le tout.
+   */
+  applyPlacement(p: Placement | null) {
+    this.saved = p ? { ...p.positions } : {};
+    useNetwork.getState().setPinned(p ? p.pinned.filter((id) => this.saved[id]) : []);
+    this.grabbed = null;
+    // les neurones déjà là (même fichier réimporté) prennent leur place tout de suite…
+    for (const [id, pos] of Object.entries(this.saved)) {
       const n = this.nodes.get(id);
       if (!n) continue;
-      n.pos.set(p[0], p[1], p[2]);
+      n.pos.set(pos[0], pos[1], pos[2]);
       n.vel.set(0, 0, 0);
     }
+    // …les nouveaux naissent comme au démarrage (le réseau se dispose, puis la caméra le montre)
+    this.rebootFrames = 4;
+    writeKey(POS_KEY, JSON.stringify(this.saved));
+    window.setTimeout(() => fx.emit({ kind: 'overview' }), 400);
   }
+
+  /** quelques images après un import : le prochain changement de structure se dispose comme au démarrage */
+  private rebootFrames = 0;
 
   bounds(out = new THREE.Vector3()): { center: THREE.Vector3; radius: number } {
     if (!this.list.length) return { center: out.set(0, 0, 0), radius: 40 };

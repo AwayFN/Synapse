@@ -3,9 +3,8 @@ import { useShallow } from 'zustand/react/shallow';
 import { displayTitle, useData } from '../store/data';
 import { useUI } from '../store/ui';
 import { excerpt, matchScore } from '../lib/text';
-import { fmtStamp } from '../lib/time';
+import { fmtDay, fmtStamp, fmtTime } from '../lib/time';
 import { tagsOf, type Note, type Project } from '../types';
-import { useCanWrite } from '../sync/lock';
 import { Corners, cvar, Kbd } from './common';
 import { tagColor } from './TagBar';
 
@@ -19,7 +18,6 @@ function Notes() {
   const createNote = useData((s) => s.createNote);
   const setView = useUI((s) => s.setView);
   const openEditor = useUI((s) => s.openEditor);
-  const canWrite = useCanWrite();
   const [filter, setFilter] = useState<string>('all');
   const [tag, setTag] = useState<string | null>(null);
   const [q, setQ] = useState('');
@@ -70,11 +68,9 @@ function Notes() {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <input className="field !w-[220px] max-md:!w-[160px]" placeholder="Chercher dans les notes…" value={q} onChange={(e) => setQ(e.target.value)} data-notes-search />
-            {canWrite && (
-              <button className="btn btn-primary" style={cvar('#a855f7')} onClick={create}>
-                + Nouvelle note
-              </button>
-            )}
+            <button className="btn btn-primary" style={cvar('#a855f7')} onClick={create}>
+              + Nouvelle note
+            </button>
             <button className="btn" onClick={() => setView('network')}>
               ← Réseau <span className="text-white/35 ml-1 max-md:hidden">Échap</span>
             </button>
@@ -145,6 +141,12 @@ function Notes() {
                           #{x}
                         </span>
                       ))}
+                      {n.date && (
+                        <span className="mono text-[9px] tracking-[0.08em] text-[#ffb020]/80" title="Dans l’agenda">
+                          ◷ {fmtDay(n.date)}
+                          {n.time != null ? ` · ${fmtTime(n.time)}` : ''}
+                        </span>
+                      )}
                       <span className="mono text-[9px] text-white/30 ml-auto">{fmtStamp(n.updatedAt)}</span>
                     </div>
                   </button>

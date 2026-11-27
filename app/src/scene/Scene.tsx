@@ -7,7 +7,6 @@ import { Galaxy } from './Galaxy';
 import { Starfield } from './Starfield';
 import { FlyControls } from './FlyControls';
 import { LabelsProjector } from './LabelsProjector';
-import { PresenceProjector } from './PresenceProjector';
 import { layout } from './layout';
 import { useStructure } from './structure';
 import { useUI } from '../store/ui';
@@ -60,7 +59,6 @@ function World() {
       <Starfield />
       <Galaxy structure={structure} />
       <LabelsProjector />
-      <PresenceProjector />
     </>
   );
 }

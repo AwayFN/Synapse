@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-
     <!--
-      Synapse est dans l'application (V7) : il marche sans réseau. INTERNET sert à se synchroniser avec le Synapse central.
-      usesCleartextTraffic : un serveur Synapse sur le même Wi-Fi a une adresse en http (ex. http://192.168.1.20:5173).
-      Le Synapse central, lui, passe par https.
+      Synapse V8 : 100 % local. L'application n'a PAS la permission d'accéder à Internet : elle ne peut se connecter à rien.
+      Seule permission : faire vibrer légèrement le téléphone quand on prend un neurone en main (appui long).
+      allowBackup="false" : les données ne partent pas dans la sauvegarde en ligne d'Android (elles restent dans le
+      téléphone ; Synapse en garde lui-même une copie dans Documents/Synapse).
     -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
@@ -16,7 +16,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Synapse"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="false">
 
         <activity
             android:name=".MainActivity"

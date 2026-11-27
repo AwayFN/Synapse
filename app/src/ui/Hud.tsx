@@ -8,20 +8,11 @@ import { fmtClock, fmtRelative, fmtTime, slotEndTs, slotStartTs } from '../lib/t
 import { hasProject, TYPE_PLURAL, type EntityType, type Slot } from '../types';
 import { cvar, Kbd } from './common';
 import { TagBar } from './TagBar';
-import { PresenceBar } from './Presence';
-import { AccountChip } from './Account';
-import { PendingChip } from './Pending';
-import { deName, ROLE_LABEL, useSession } from '../sync/session';
-import { useCan } from '../sync/perm';
 import { fx } from '../store/fx';
 
-/** Sous le nom : « réseau personnel », ou chez qui l'on est et ce qu'on peut y faire */
+/** Sous le nom : tout est ici, sur cet appareil */
 function Subtitle() {
-  const mode = useSession((s) => s.mode);
-  const role = useSession((s) => s.role);
-  const ownerName = useSession((s) => s.ownerName);
-  const text = mode === 'local' || role === 'owner' ? 'réseau personnel · v7' : `cerveau ${deName(ownerName || 'ton hôte')} · invité · ${ROLE_LABEL[role]}`;
-  return <div className="hud text-[9px] text-white/35 mt-1.5 ml-5 max-w-[320px] truncate">{text}</div>;
+  return <div className="hud text-[9px] text-white/35 mt-1.5 ml-5 max-w-[320px] truncate">réseau personnel · v8 · 100 % local</div>;
 }
 
 const TYPES: EntityType[] = ['project', 'task', 'note', 'slot'];
@@ -70,7 +61,7 @@ function ViewTabs() {
   // sur téléphone, des noms courts : les quatre vues tiennent sous le pouce
   const tabs: { v: typeof view; label: string; short: string; key: string }[] = [
     { v: 'network', label: 'Réseau', short: 'Réseau', key: 'ÉCHAP' },
-    { v: 'agenda', label: 'Emploi du temps', short: 'Agenda', key: 'TAB' },
+    { v: 'agenda', label: 'Agenda', short: 'Agenda', key: 'TAB' },
     { v: 'tasks', label: 'Tâches', short: 'Tâches', key: '⇧TAB' },
     { v: 'notes', label: 'Notes', short: 'Notes', key: '' },
   ];
@@ -242,6 +233,7 @@ function Hints() {
       <span><Kbd>Molette</Kbd> avancer</span>
       <span><Kbd>Clic droit</Kbd> pivoter</span>
       <span><Kbd>ZQSD</Kbd> voler</span>
+      <span><Kbd>Glisser un neurone</Kbd> le déplacer</span>
       <span><Kbd>H</Kbd> vue d'ensemble</span>
       <span><Kbd>?</Kbd> aide</span>
     </div>
@@ -280,12 +272,38 @@ function HomeButton() {
   );
 }
 
+/** Les réglages du réseau : distance entre les neurones, neurones déplacés à la main */
+function NetworkButton() {
+  const open = useUI((s) => s.networkOpen);
+  const setOpen = useUI((s) => s.setNetworkOpen);
+  return (
+    <button
+      data-ui
+      data-network-settings-button
+      onClick={() => setOpen(!open)}
+      title="Réglages du réseau : distance entre les neurones"
+      aria-label="Réglages du réseau"
+      className={`glass pointer-events-auto h-9 max-md:h-10 px-3 max-md:px-0 max-md:w-10 flex items-center justify-center gap-2 hud text-[10px] transition-colors ${
+        open ? 'neon text-[#00e5ff]' : 'text-white/55 hover:text-white'
+      }`}
+      style={cvar('#00e5ff')}
+    >
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden>
+        <circle cx="5" cy="7" r="2.2" />
+        <circle cx="18.5" cy="5.5" r="1.8" />
+        <circle cx="14" cy="17.5" r="2.6" />
+        <path d="M7 7.6l9.7-1.6M6.4 8.8l6 6.7M17.9 7.3l-2.9 7.7" />
+      </svg>
+      <span className="max-md:hidden">Réseau</span>
+    </button>
+  );
+}
+
 export function Hud() {
   const view = useUI((s) => s.view);
   const editorOpen = useUI((s) => !!s.editorId);
   const panelOpen = useUI((s) => !!s.selectedId);
   const openPalette = useUI((s) => s.openPalette);
-  const can = useCan();
   const hidden = view !== 'network' || editorOpen;
   return (
     <div
@@ -321,17 +339,23 @@ export function Hud() {
         </div>
       </div>
 
+      {/* sur téléphone : les tags en haut, sur une ligne qui défile (les mêmes que sur le PC) */}
+      <div
+        className={`md:hidden absolute left-0 right-0 top-[60px] transition-opacity duration-300 ${panelOpen ? 'opacity-0 pointer-events-none' : ''}`}
+        data-mobile-tags
+      >
+        <TagBar variant="scroll" />
+      </div>
+
       <div
         className="absolute right-8 top-7 transition-transform duration-300 max-md:right-3 max-md:top-3"
         style={{ transform: panelOpen ? 'translateX(-440px)' : undefined, opacity: panelOpen ? 0 : 1 }}
       >
         <div className="flex flex-col items-end gap-2.5">
-          <AccountChip />
-          <PendingChip />
+          <NetworkButton />
           <div className="max-md:hidden">
             <NowWidget />
           </div>
-          <PresenceBar />
         </div>
       </div>
 
@@ -358,8 +382,8 @@ export function Hud() {
             className="glass neon pointer-events-auto flex items-center gap-3 px-4 py-2 max-md:py-2.5 hud text-[10.5px] text-white/70 hover:text-white transition-colors"
             style={cvar('#ff2e88')}
           >
-            <span className="text-[#ff2e88] text-sm leading-none">{can.write() ? '+' : '⌕'}</span>
-            {can.write() ? 'Créer · chercher' : 'Chercher'}
+            <span className="text-[#ff2e88] text-sm leading-none">+</span>
+            Créer · chercher
             <span className="max-md:hidden">
               <Kbd>Ctrl K</Kbd>
             </span>

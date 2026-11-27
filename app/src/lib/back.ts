@@ -1,11 +1,10 @@
 import { useEffect, useRef } from 'react';
-import { useUI } from '../store/ui';
-import { useSession } from '../sync/session';
+import { networkSettingsVisible, useUI } from '../store/ui';
 
 /**
  * « Retour » : la touche Échap (ordinateur) et le bouton retour (téléphone Android) ferment ce qui est ouvert,
- * du plus haut au plus bas, partout : palette, aide, fenêtres (compte, admin, partage, retours), éditeur, sous-
- * panneaux (lier à…, créneau de l'emploi du temps), vues, fiche. Renvoie false s'il n'y avait rien à fermer.
+ * du plus haut au plus bas, partout : palette, aide, réglages du réseau, éditeur, sous-panneaux (lier à…, élément
+ * ouvert dans l'agenda), vues, fiche. Renvoie false s'il n'y avait rien à fermer.
  *
  * Un composant qui ouvre sa propre couche s'inscrit avec useBackLayer(ouvert, fermer, niveau) ; le niveau dit ce
  * qui est au-dessus de quoi (même ordre que l'affichage).
@@ -13,13 +12,12 @@ import { useSession } from '../sync/session';
 export const LEVEL = {
   palette: 100,
   help: 95,
-  terms: 96,
-  feedback: 90,
+  /** les réglages du réseau */
   dialog: 85,
   /** dans l'éditeur en grand (lier à…) */
   inEditor: 55,
   editor: 50,
-  /** dans une vue : le panneau d'un créneau de l'emploi du temps */
+  /** dans une vue : l'élément ouvert à côté de la semaine (agenda) */
   inView: 40,
   view: 30,
   /** dans la fiche (lier à…) */
@@ -62,17 +60,13 @@ function typing() {
 
 export function goBack(): boolean {
   const ui = useUI.getState();
-  const ss = useSession.getState();
   const candidates: { level: number; order: number; run: () => void }[] = [];
   const add = (on: boolean, level: number, run: () => void) => {
     if (on) candidates.push({ level, order: 0, run });
   };
   add(ui.paletteOpen, LEVEL.palette, () => ui.closePalette());
   add(ui.helpOpen, LEVEL.help, () => ui.setHelp(false));
-  add(ss.feedbackOpen, LEVEL.feedback, () => useSession.setState({ feedbackOpen: false }));
-  add(ss.adminOpen, LEVEL.dialog, () => useSession.setState({ adminOpen: false }));
-  add(ss.shareOpen, LEVEL.dialog, () => useSession.setState({ shareOpen: false }));
-  add(ss.accountOpen, LEVEL.dialog, () => useSession.setState({ accountOpen: false }));
+  add(networkSettingsVisible(ui), LEVEL.dialog, () => ui.setNetworkOpen(false));
   add(!!ui.editorId, LEVEL.editor, () => ui.closeEditor());
   add(ui.view !== 'network', LEVEL.view, () => ui.setView('network'));
   add(!!ui.selectedId && ui.view === 'network', LEVEL.panel, () => ui.closePanel());
@@ -89,7 +83,7 @@ export function goBack(): boolean {
 }
 
 let installed = false;
-/** Échap partout (y compris sur les écrans de connexion), et le bouton retour de l'application Android */
+/** Échap partout, et le bouton retour de l'application Android */
 export function installBack() {
   if (installed) return;
   installed = true;

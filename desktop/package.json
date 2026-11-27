@@ -1,0 +1,67 @@
+{
+  "name": "synapse",
+  "productName": "Synapse",
+  "version": "8.0.0",
+  "description": "Synapse : ton réseau personnel en 3D, 100 % local",
+  "author": "AwayFN",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "web": "node scripts/copier-web.cjs",
+    "start": "electron .",
+    "icone": "electron scripts/icone.cjs",
+    "dist": "node scripts/copier-web.cjs && electron-builder --win nsis --publish never",
+    "dossier": "node scripts/copier-web.cjs && electron-builder --win dir --publish never"
+  },
+  "devDependencies": {
+    "electron": "45.4.1",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "io.github.awayfn.synapse",
+    "productName": "Synapse",
+    "copyright": "Synapse",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "donnees.cjs",
+      "icon.png",
+      "web/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "electronLanguages": [
+      "fr",
+      "en-US"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "Synapse-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Synapse",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "uninstallDisplayName": "Synapse",
+      "language": "1036",
+      "installerLanguages": [
+        "fr_FR"
+      ],
+      "artifactName": "Synapse-Setup.${ext}"
+    }
+  }
+}

@@ -12,11 +12,6 @@ interface BaseEntity {
   updatedAt: number;
   /** Example data created on first launch */
   seed?: boolean;
-  /** jamais montré aux personnes invitées dans ce cerveau */
-  private?: boolean;
-  /** qui l'a créé / modifié en dernier (cerveau partagé) */
-  createdBy?: string;
-  updatedBy?: string;
   /** V6 : des tags sur tout (projets, tâches, notes, créneaux) */
   tags: string[];
 }
@@ -47,6 +42,10 @@ export interface Note extends BaseEntity {
   content: string;
   /** projet auquel la note appartient (null : note indépendante) */
   projectId: string | null;
+  /** V8 : une note peut avoir sa place dans l'agenda (YYYY-MM-DD), à une heure précise ou pour la journée */
+  date: string | null;
+  /** minutes depuis minuit (null : toute la journée) */
+  time: number | null;
 }
 
 export interface Slot extends BaseEntity {

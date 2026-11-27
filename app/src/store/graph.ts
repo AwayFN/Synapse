@@ -73,7 +73,7 @@ export function projectNotes(entities: Record<string, Entity>, projectId: string
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-/** Les créneaux de l'emploi du temps consacrés à un projet (les plus récents d'abord) */
+/** Les créneaux de l'agenda consacrés à un projet (les plus récents d'abord) */
 export function projectSlots(entities: Record<string, Entity>, projectId: string): Slot[] {
   return Object.values(entities)
     .filter((e): e is Slot => e.type === 'slot' && e.projectId === projectId)

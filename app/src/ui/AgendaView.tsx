@@ -2,30 +2,43 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEven
 import { useShallow } from 'zustand/react/shallow';
 import { displayTitle, useData } from '../store/data';
 import { useUI } from '../store/ui';
+import { readKey, writeKey } from '../store/storage';
 import { addDays, DAY_SHORT, fmtHM, fmtTime, fromISODate, MONTH_NAMES, minutesNow, mondayOf, slotDuration, todayISO } from '../lib/time';
-import { tagsOf, type Project, type Slot, type Task } from '../types';
+import { TYPE_ACCENT } from '../lib/color';
+import { bodyOf, hasProject, tagsOf, TYPE_LABEL, type Entity, type EntityType, type Note, type Project, type Slot, type Task } from '../types';
 import { Corners, cvar, Kbd } from './common';
-import { BodyPreview, LinksSection, ProjectSelect, Section, TagEditor } from './fields';
+import { BodyPreview, LinksSection, NoteFields, ProjectFields, ProjectSelect, Section, TagEditor, TaskFields } from './fields';
 import { TimeInput } from './TimeInput';
 import { DeleteButton } from './DetailPanel';
-import { useCanWrite, useEditLock } from '../sync/lock';
 import { LEVEL, useBackLayer } from '../lib/back';
 
 /**
- * Emploi du temps : une semaine en grille, les heures à gauche, un jour par colonne (comme un relevé d'heures).
- * Chaque créneau affiche son projet (ou « Sans projet ») et « 07:00 → 17:20 · 10 h 20 ».
- * Glisser dans la grille crée un créneau ; on déplace un créneau en le glissant, on change sa durée par le bas.
+ * Agenda (V8, l'ancien « emploi du temps ») : l'espace central d'organisation. Une semaine en grille, les heures à
+ * gauche, un jour par colonne, qui accueille tout ce qui s'organise :
+ *  - les créneaux (un bloc avec sa durée, son projet ou « Sans projet ») ;
+ *  - les tâches (à leur heure ; « toute la journée » si elles n'ont qu'un jour) ;
+ *  - les notes (V8 : une note peut avoir un jour, et une heure) ;
+ *  - les projets (leur échéance, dans « toute la journée »).
+ * Glisser dans la grille (ou toucher un vide) ajoute un créneau, comme avant ; le panneau qui s'ouvre permet d'en faire
+ * une tâche, une note ou un projet. « + Ajouter » fait de même, maintenant. Glisser un créneau, une tâche ou une note le
+ * déplace ; le bas d'un créneau change sa durée. « À planifier » : les tâches sans date, à glisser dans la semaine.
+ * Tout s'ouvre à côté de la semaine, sans quitter l'agenda.
  */
 const HOUR = 48; // px par heure
 const SNAP = 15; // minutes
 const GUTTER = 58; // colonne des heures (px)
+/** une tâche ou une note occupe une demi-heure dans la grille (elles n'ont pas de durée) */
+const ITEM_MIN = 30;
+const PLAN_KEY = 'synapse-agenda-a-planifier';
 
 const snap = (m: number) => Math.round(m / SNAP) * SNAP;
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 
+type Kind = 'slot' | 'task' | 'note';
+
 interface Seg {
   key: string;
-  kind: 'slot' | 'task';
+  kind: Kind;
   id: string;
   day: number; // 0..6 dans la semaine affichée
   from: number;
@@ -36,8 +49,8 @@ interface Seg {
   cont?: boolean;
 }
 
-/** Les créneaux et tâches horodatées de la semaine, découpés par jour et rangés en colonnes s'ils se chevauchent */
-function layoutWeek(week: string[], slots: Slot[], tasks: Task[]): Seg[] {
+/** Les créneaux, tâches et notes à heure fixe de la semaine, découpés par jour et rangés en colonnes s'ils se chevauchent */
+function layoutWeek(week: string[], slots: Slot[], tasks: Task[], notes: Note[]): Seg[] {
   const index = new Map(week.map((d, i) => [d, i]));
   const segs: Seg[] = [];
   const add = (s: Omit<Seg, 'lane' | 'lanes'>) => {
@@ -53,8 +66,12 @@ function layoutWeek(week: string[], slots: Slot[], tasks: Task[]): Seg[] {
     }
   }
   for (const t of tasks) {
-    const d = index.get(t.date!);
-    if (d !== undefined && t.time != null) add({ key: t.id, kind: 'task', id: t.id, day: d, from: t.time, to: Math.min(1440, t.time + 30) });
+    const d = t.date ? index.get(t.date) : undefined;
+    if (d !== undefined && t.time != null) add({ key: t.id, kind: 'task', id: t.id, day: d, from: t.time, to: Math.min(1440, t.time + ITEM_MIN) });
+  }
+  for (const n of notes) {
+    const d = n.date ? index.get(n.date) : undefined;
+    if (d !== undefined && n.time != null) add({ key: n.id, kind: 'note', id: n.id, day: d, from: n.time, to: Math.min(1440, n.time + ITEM_MIN) });
   }
   // par jour : groupes qui se chevauchent, puis une colonne par élément simultané
   for (let day = 0; day < 7; day++) {
@@ -91,125 +108,293 @@ function weekTitle(monday: string): string {
   return `Semaine du ${a.getDate()}${same ? '' : ` ${MONTH_NAMES[a.getMonth()]}`} au ${b.getDate()} ${MONTH_NAMES[b.getMonth()]} ${b.getFullYear()}`;
 }
 
+/** Où ajouter : un jour, et une heure (ou rien : toute la journée), avec la durée d'un créneau */
+interface At {
+  date: string;
+  start: number | null;
+  end: number | null;
+}
+
+/** Ce qu'on garde d'un élément quand il change de sorte (tout juste créé : créneau → tâche…) */
+interface Carry {
+  title: string;
+  tags: string[];
+  projectId: string | null;
+  body: string;
+}
+function carryOf(e: Entity): Carry {
+  return { title: e.title, tags: tagsOf(e), projectId: hasProject(e) ? e.projectId : null, body: bodyOf(e) };
+}
+
+function createAt(type: EntityType, at: At, c?: Carry): Entity {
+  const d = useData.getState();
+  const base = c ? { title: c.title, tags: c.tags } : {};
+  const projectId = c?.projectId ?? null;
+  const body = c?.body ?? '';
+  switch (type) {
+    case 'slot': {
+      const start = at.start ?? 9 * 60;
+      const end = at.end ?? (start + 60) % 1440;
+      return d.createSlot({ ...base, projectId, description: body, date: at.date, start, end });
+    }
+    case 'task':
+      return d.createTask({ ...base, projectId, description: body, date: at.date, time: at.start });
+    case 'note':
+      return d.createNote({ ...base, projectId, content: body, date: at.date, time: at.start });
+    case 'project':
+      return d.createProject({ ...base, description: body, deadline: at.date });
+  }
+}
+
+/** Un élément tout juste ajouté depuis l'agenda : on peut encore choisir ce que c'est */
+interface Fresh {
+  id: string;
+  at: At;
+}
+
+const ADD_TYPES: EntityType[] = ['slot', 'task', 'note', 'project'];
+
+function useNarrow() {
+  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)');
+    const on = () => setNarrow(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  return narrow;
+}
+
 type Drag =
   | { mode: 'create'; day: number; anchor: number; cur: number; moved: boolean }
-  | { mode: 'move' | 'resize'; id: string; x0: number; y0: number; dDay: number; dMin: number; moved: boolean; slot: Slot };
+  | { mode: 'move' | 'resize'; id: string; kind: Kind; x0: number; y0: number; dDay: number; dMin: number; moved: boolean; date: string; start: number; end: number };
 
-/** Panneau du créneau ouvert (à droite de la grille) : tout se règle sans quitter l'emploi du temps */
-function SlotPanel({ s, onClose }: { s: Slot; onClose: () => void }) {
+/** Une tâche glissée depuis « À planifier » : où elle tomberait (un jour, une heure ou toute la journée) */
+interface PlanDrag {
+  id: string;
+  x: number;
+  y: number;
+  at: { day: number; min: number | null } | null;
+}
+
+/** Le créneau ouvert : ses horaires, son projet, son jour… (comme avant) */
+function SlotBody({ s }: { s: Slot }) {
   const update = useData((st) => st.update);
-  const project = useData((st) => (s.projectId ? (st.entities[s.projectId] as Project | undefined) : undefined));
+  const dur = slotDuration(s.start, s.end);
+  return (
+    <>
+      <div className="mono text-[11px] tracking-[0.08em] text-white/55 mt-1">
+        {fmtTime(s.start)} → {fmtTime(s.end)} · {fmtHM(dur)}
+        {s.end <= s.start && <span className="text-[#ffb020]"> · finit le lendemain</span>}
+      </div>
+      <Section label="Projet">
+        <ProjectSelect value={s.projectId ?? null} onChange={(id) => update(s.id, { projectId: id })} empty="Sans projet" />
+      </Section>
+      <Section label="Jour">
+        <input type="date" className="field field-mono" value={s.date} onChange={(e) => e.target.value && update(s.id, { date: e.target.value })} />
+      </Section>
+      <Section label="Horaires">
+        <div className="flex items-center gap-2">
+          <TimeInput value={s.start} onChange={(m) => m != null && update(s.id, { start: m })} />
+          <span className="text-white/40 mono">→</span>
+          <TimeInput value={s.end} onChange={(m) => m != null && update(s.id, { end: m })} />
+        </div>
+      </Section>
+      <Section label="Description">
+        <BodyPreview e={s} placeholder="Ce que tu fais pendant ce créneau…" />
+      </Section>
+    </>
+  );
+}
+
+const TITLE_HINT: Record<EntityType, string> = { slot: 'Sans projet', task: 'Nouvelle tâche', note: 'Nouvelle note', project: 'Nouveau projet' };
+
+/** L'élément ouvert, à côté de la semaine : tout se règle sans quitter l'agenda */
+function AgendaPanel({ e, fresh, onConvert, onClose }: { e: Entity; fresh: boolean; onConvert: (t: EntityType) => void; onClose: () => void }) {
+  const update = useData((st) => st.update);
+  const project = useData((st) => (e.type === 'slot' && e.projectId ? (st.entities[e.projectId] as Project | undefined) : undefined));
   const openEntity = useUI((st) => st.openEntity);
-  const lock = useEditLock(s.id);
-  const ro = !lock.canWrite;
   const titleRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    if (!s.title && !ro) titleRef.current?.focus();
+    if (!e.title) titleRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s.id]);
-  const dur = slotDuration(s.start, s.end);
+  }, [e.id]);
   return (
     <aside
       className="w-[380px] max-md:w-full flex-none glass neon bg-[rgb(7_7_12/0.96)] flex flex-col anim-panel min-h-0 max-md:absolute max-md:inset-0 max-md:z-20"
-      style={cvar(s.color)}
-      data-slot-panel
+      style={cvar(e.color)}
+      data-agenda-panel={e.type}
+      data-slot-panel={e.type === 'slot' ? '' : undefined}
     >
       <Corners />
       <div className="flex items-center gap-2.5 px-5 pt-4 pb-1">
         <span className="dot" />
-        <span className="hud text-[10px] text-[rgb(var(--c))]">Créneau</span>
-        {lock.holder && <span className="hud text-[9px] text-[#ffb020]">✎ {lock.holder} modifie</span>}
+        <span className="hud text-[10px] text-[rgb(var(--c))]">{fresh ? 'Ajouter' : TYPE_LABEL[e.type]}</span>
         <button className="btn btn-ghost !px-2 ml-auto" title="Fermer (Échap)" onClick={onClose}>
           ✕
         </button>
       </div>
       <div className="flex-1 overflow-y-auto scroll-thin px-5 pb-5">
+        {/* tout juste ajouté : ce que c'est (un créneau, sinon une tâche, une note, un projet) */}
+        {fresh && (
+          <div className="seg mt-2 w-full" data-agenda-type>
+            {ADD_TYPES.map((t) => (
+              <button key={t} className="flex-1" data-on={e.type === t ? '1' : '0'} data-type={t} style={cvar(TYPE_ACCENT[t])} onClick={() => onConvert(t)}>
+                {TYPE_LABEL[t]}
+              </button>
+            ))}
+          </div>
+        )}
         <input
           ref={titleRef}
-          value={s.title}
-          readOnly={ro}
-          onFocus={lock.claim}
-          onChange={(e) => update(s.id, { title: e.target.value })}
-          placeholder={project ? displayTitle(project) : 'Sans projet'}
-          className="w-full bg-transparent outline-none text-[22px] font-semibold tracking-tight text-white placeholder:text-white/35 mt-2 py-1 border-b border-transparent focus:border-[rgb(var(--c)/0.5)]"
+          value={e.title}
+          onChange={(ev) => update(e.id, { title: ev.target.value })}
+          placeholder={e.type === 'slot' && project ? displayTitle(project) : TITLE_HINT[e.type]}
+          className="w-full bg-transparent outline-none text-[22px] font-semibold tracking-tight text-white placeholder:text-white/35 mt-3 py-1 border-b border-transparent focus:border-[rgb(var(--c)/0.5)]"
+          data-agenda-title
         />
-        <div className="mono text-[11px] tracking-[0.08em] text-white/55 mt-1">
-          {fmtTime(s.start)} → {fmtTime(s.end)} · {fmtHM(dur)}
-          {s.end <= s.start && <span className="text-[#ffb020]"> · finit le lendemain</span>}
-        </div>
-        <fieldset disabled={ro} className="m-0 p-0 border-0 min-w-0">
-          <Section label="Projet">
-            <ProjectSelect value={s.projectId ?? null} onChange={(id) => update(s.id, { projectId: id })} empty="Sans projet" />
-          </Section>
-          <Section label="Jour">
-            <input type="date" className="field field-mono" value={s.date} onFocus={lock.claim} onChange={(e) => e.target.value && update(s.id, { date: e.target.value })} />
-          </Section>
-          <Section label="Horaires">
-            <div className="flex items-center gap-2" onFocus={lock.claim}>
-              <TimeInput value={s.start} onChange={(m) => m != null && update(s.id, { start: m })} />
-              <span className="text-white/40 mono">→</span>
-              <TimeInput value={s.end} onChange={(m) => m != null && update(s.id, { end: m })} />
-            </div>
-          </Section>
-          <Section label="Description">
-            <BodyPreview e={s} placeholder="Ce que tu fais pendant ce créneau…" readOnly={ro} />
-          </Section>
-          <Section label="Tags">
-            {ro ? <span className="mono text-[11px] text-white/55">{tagsOf(s).length ? tagsOf(s).map((t) => `#${t}`).join('  ') : '—'}</span> : <TagEditor id={s.id} tags={tagsOf(s)} />}
-          </Section>
-        </fieldset>
-        <LinksSection id={s.id} readOnly={ro} pickerLevel={LEVEL.inView + 1} />
+        {e.type === 'slot' && <SlotBody s={e} />}
+        {e.type === 'task' && <TaskFields t={e} />}
+        {e.type === 'note' && <NoteFields n={e} />}
+        {e.type === 'project' && <ProjectFields p={e} />}
+        <Section label="Tags">
+          <TagEditor id={e.id} tags={tagsOf(e)} />
+        </Section>
+        <LinksSection id={e.id} pickerLevel={LEVEL.inView + 1} />
         <div className="mt-7 pt-4 border-t border-white/[0.07] flex items-center justify-between gap-3 flex-wrap">
-          <button className="btn" onClick={() => openEntity(s.id)}>
+          <button className="btn" onClick={() => openEntity(e.id)}>
             Voir dans le réseau
           </button>
-          {!ro && <DeleteButton id={s.id} />}
+          <DeleteButton id={e.id} />
         </div>
       </div>
     </aside>
   );
 }
 
+/** Les tâches sans date : à glisser dans la semaine (souris), ou à ouvrir pour leur donner un jour */
+function PlanTray({ tasks, onOpen, onDragStart, overlay, onClose }: { tasks: Task[]; onOpen: (id: string) => void; onDragStart: (t: Task, e: RPointerEvent<HTMLElement>) => void; overlay: boolean; onClose: () => void }) {
+  const projects = useData((s) => s.entities);
+  const createTask = useData((s) => s.createTask);
+  const [title, setTitle] = useState('');
+  return (
+    <aside
+      className={`w-[230px] flex-none glass bg-[rgb(7_7_12/0.94)] flex flex-col min-h-0 ${overlay ? 'absolute inset-0 z-20 w-full anim-panel' : ''}`}
+      style={cvar('#00e5ff')}
+      data-plan-tray
+    >
+      <div className="flex items-center gap-2 px-3 pt-3 pb-2 border-b border-white/[0.06]">
+        <span className="hud text-[10px] text-[#00e5ff]">À planifier</span>
+        <span className="mono text-[10px] text-white/40">{String(tasks.length).padStart(2, '0')}</span>
+        <button className="btn btn-ghost !px-2 ml-auto" title="Fermer" onClick={onClose}>
+          ✕
+        </button>
+      </div>
+      <div className="px-3 pt-2.5">
+        <input
+          className="field !text-[12px]"
+          placeholder="+ Tâche à planifier (Entrée)"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && title.trim()) {
+              createTask({ title: title.trim() });
+              setTitle('');
+            }
+          }}
+        />
+      </div>
+      <div className="flex-1 min-h-0 overflow-y-auto scroll-thin p-2 flex flex-col gap-1.5">
+        {tasks.length === 0 && <div className="text-[11.5px] text-white/35 leading-relaxed p-2">Toutes tes tâches ont un jour. Les nouvelles tâches sans date arrivent ici.</div>}
+        {tasks.map((t) => {
+          const p = t.projectId ? (projects[t.projectId] as Project | undefined) : undefined;
+          return (
+            <div
+              key={t.id}
+              role="button"
+              tabIndex={0}
+              data-plan-task={t.id}
+              className="relative glass px-2.5 py-2 cursor-grab touch-pan-y hover:border-[rgb(var(--c)/0.5)] select-none"
+              style={cvar(t.color)}
+              onPointerDown={(e) => onDragStart(t, e)}
+              onKeyDown={(e) => e.key === 'Enter' && onOpen(t.id)}
+            >
+              <span className="absolute left-0 top-0 bottom-0 w-[2px] bg-[rgb(var(--c))]" />
+              <div className="text-[12.5px] text-white/85 leading-snug truncate">{displayTitle(t)}</div>
+              <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                {t.status === 'doing' && <span className="mono text-[8.5px] text-[#ffb020] tracking-[0.12em]">EN COURS</span>}
+                {p && <span className="mono text-[9px] text-[rgb(var(--c))] truncate max-w-full" style={cvar(p.color)}>↳ {displayTitle(p)}</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="hud text-[8.5px] text-white/30 px-3 py-2 border-t border-white/[0.06] leading-relaxed max-md:hidden">Glisse une tâche dans la semaine</div>
+    </aside>
+  );
+}
+
 function Week() {
   const today = todayISO();
+  const narrow = useNarrow();
   const [monday, setMonday] = useState(() => mondayOf(today));
   const [sel, setSel] = useState<string | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
+  const [plan, setPlan] = useState<PlanDrag | null>(null);
+  const [menu, setMenu] = useState(false);
   const [now, setNow] = useState(minutesNow());
-  const fresh = useRef<string | null>(null);
+  const [planOpen, setPlanOpen] = useState(() => {
+    const v = readKey(PLAN_KEY);
+    return v === null ? window.innerWidth >= 1280 : v === '1';
+  });
+  const fresh = useRef<Fresh | null>(null);
   const setView = useUI((s) => s.setView);
-  const openEntity = useUI((s) => s.openEntity);
-  // invité « peut regarder » : il voit l'emploi du temps sans pouvoir le changer
-  const lockedView = !useCanWrite();
   const scrollRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+  const allDayRef = useRef<HTMLDivElement>(null);
 
   const week = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(monday, i)), [monday]);
   const slots = useData(useShallow((s) => Object.values(s.entities).filter((e): e is Slot => e.type === 'slot')));
   const tasks = useData(useShallow((s) => Object.values(s.entities).filter((e): e is Task => e.type === 'task' && !!e.date)));
+  const notes = useData(useShallow((s) => Object.values(s.entities).filter((e): e is Note => e.type === 'note' && !!e.date)));
   const projects = useData(useShallow((s) => Object.values(s.entities).filter((e): e is Project => e.type === 'project' && !!e.deadline)));
+  const toPlan = useData(
+    useShallow((s) =>
+      Object.values(s.entities)
+        .filter((e): e is Task => e.type === 'task' && !e.date && e.status !== 'done')
+        .sort((a, b) => Number(b.status === 'doing') - Number(a.status === 'doing') || a.order - b.order),
+    ),
+  );
   const entities = useData((s) => s.entities);
-  const selected = sel ? (entities[sel] as Slot | undefined) : undefined;
+  const selected = sel ? entities[sel] : undefined;
 
-  const segs = useMemo(() => layoutWeek(week, slots, tasks), [week, slots, tasks]);
+  const segs = useMemo(() => layoutWeek(week, slots, tasks, notes), [week, slots, tasks, notes]);
   const totals = useMemo(() => {
     const t = new Array(7).fill(0);
     for (const s of segs) if (s.kind === 'slot') t[s.day] += s.to - s.from;
     return t;
   }, [segs]);
   const weekTotal = totals.reduce((a, b) => a + b, 0);
+  const counts = useMemo(() => {
+    const inWeek = new Set(week);
+    return { tasks: tasks.filter((t) => inWeek.has(t.date!)).length, notes: notes.filter((n) => inWeek.has(n.date!)).length };
+  }, [week, tasks, notes]);
   const allDay = useMemo(() => {
-    const m = week.map(() => [] as (Task | Project)[]);
+    const m = week.map(() => [] as (Task | Note | Project)[]);
     const idx = new Map(week.map((d, i) => [d, i]));
     for (const t of tasks) if (t.time == null && idx.has(t.date!)) m[idx.get(t.date!)!].push(t);
+    for (const n of notes) if (n.time == null && idx.has(n.date!)) m[idx.get(n.date!)!].push(n);
     for (const p of projects) if (idx.has(p.deadline!)) m[idx.get(p.deadline!)!].push(p);
     return m;
-  }, [week, tasks, projects]);
+  }, [week, tasks, notes, projects]);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(minutesNow()), 30000);
     return () => window.clearInterval(id);
   }, []);
+  useEffect(() => {
+    if (sel && !entities[sel]) setSel(null);
+  }, [sel, entities]);
 
   // à l'ouverture et à chaque semaine : on montre la matinée (ou l'heure actuelle)
   useLayoutEffect(() => {
@@ -220,21 +405,34 @@ function Week() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monday]);
 
-  /** Fermer le panneau : un créneau créé d'un clic et laissé vide disparaît */
+  /** Fermer le panneau : un élément tout juste ajouté et laissé vide disparaît */
   const close = () => {
     const id = sel;
     setSel(null);
-    if (id && fresh.current === id) {
-      const d = useData.getState();
-      const s = d.entities[id] as Slot | undefined;
-      const linked = d.links.some((l) => l.a === id || l.b === id);
-      if (s && !s.title.trim() && !s.description.trim() && !s.projectId && !tagsOf(s).length && !linked) d.remove(id, { silent: true });
-    }
+    const f = fresh.current;
     fresh.current = null;
+    if (!id || !f || f.id !== id) return;
+    const d = useData.getState();
+    const e = d.entities[id];
+    const linked = d.links.some((l) => l.a === id || l.b === id);
+    if (e && !e.title.trim() && !bodyOf(e).trim() && !(hasProject(e) && e.projectId) && !tagsOf(e).length && !linked) d.remove(id, { silent: true });
+  };
+  const open = (id: string) => {
+    if (sel && sel !== id) close();
+    fresh.current = null;
+    setSel(id);
+  };
+  const togglePlan = () => {
+    setPlanOpen((o) => {
+      writeKey(PLAN_KEY, o ? '0' : '1');
+      return !o;
+    });
   };
 
-  // Échap (ou retour sur le téléphone) : d'abord le panneau du créneau, puis la vue (voir lib/back.ts)
+  // Échap (ou retour sur le téléphone) : d'abord le menu, l'élément ouvert, « À planifier » (téléphone), puis la vue
   useBackLayer(!!sel, close, LEVEL.inView);
+  useBackLayer(menu, () => setMenu(false), LEVEL.inView + 2);
+  useBackLayer(planOpen && narrow, () => setPlanOpen(false), LEVEL.inView - 1);
 
   /** Position du pointeur dans la grille → jour (0..6) et minute */
   const at = (e: { clientX: number; clientY: number }) => {
@@ -243,16 +441,46 @@ function Week() {
     return { day: clamp(Math.floor((e.clientX - r.left - GUTTER) / col), 0, 6), min: clamp(((e.clientY - r.top) / HOUR) * 60, 0, 1440), col };
   };
 
-  const create = (day: number, from: number, to: number) => {
+  /** Ajouter à cet endroit : un créneau d'abord (comme avant), le panneau propose d'en faire autre chose */
+  const add = (type: EntityType, where: At) => {
+    if (sel) close();
+    const e = createAt(type, where);
+    fresh.current = { id: e.id, at: where };
+    setSel(e.id);
+  };
+  const create = (day: number, from: number, to: number) => add('slot', { date: week[day], start: from, end: to >= 1440 ? 0 : to });
+
+  /** Tout juste ajouté : il devient une tâche, une note, un projet… (titre, tags, texte et projet suivent) */
+  const convert = (to: EntityType) => {
+    const f = fresh.current;
     const d = useData.getState();
-    const end = to >= 1440 ? 0 : to;
-    const s = d.createSlot({ date: week[day], start: from, end });
-    fresh.current = s.id;
-    setSel(s.id);
+    const cur = sel ? d.entities[sel] : undefined;
+    if (!f || !cur || cur.id !== f.id || cur.type === to) return;
+    const next = createAt(to, f.at, carryOf(cur));
+    d.remove(cur.id, { silent: true });
+    fresh.current = { ...f, id: next.id };
+    setSel(next.id);
+  };
+
+  /** « + Ajouter » : maintenant (ou le lundi à 9 h, si la semaine affichée n'est pas celle-ci) */
+  const addNow = (type: EntityType) => {
+    setMenu(false);
+    const inWeek = week.includes(today);
+    const start = inWeek ? clamp(Math.ceil(now / SNAP) * SNAP, 0, 1440 - 60) : 9 * 60;
+    const date = inWeek ? today : week[0];
+    // un projet ajouté par ce bouton n'a pas encore d'échéance (elle se choisit dans son panneau)
+    if (type === 'project') {
+      if (sel) close();
+      const p = useData.getState().createProject({});
+      fresh.current = { id: p.id, at: { date, start, end: start + 60 } };
+      setSel(p.id);
+      return;
+    }
+    add(type, { date, start, end: start + 60 });
   };
 
   const onGridDown = (e: RPointerEvent<HTMLDivElement>) => {
-    if (lockedView || e.button !== 0 || e.pointerType === 'touch') return;
+    if (e.button !== 0 || e.pointerType === 'touch') return;
     if ((e.target as HTMLElement).closest('[data-block]')) return;
     const p = at(e);
     const m = clamp(Math.floor(p.min / SNAP) * SNAP, 0, 1440 - SNAP);
@@ -293,58 +521,127 @@ function Week() {
       return;
     }
     if (!d.moved) {
-      setSel(d.id);
+      open(d.id);
       return;
     }
-    const s = d.slot;
-    const dur = slotDuration(s.start, s.end);
     const update = useData.getState().update;
-    if (d.mode === 'move') {
-      const start = clamp(s.start + d.dMin, 0, 1440 - SNAP);
-      update(s.id, { date: addDays(s.date, d.dDay), start, end: (start + dur) % 1440 });
+    if (d.kind === 'slot') {
+      const dur = slotDuration(d.start, d.end);
+      if (d.mode === 'move') {
+        const start = clamp(d.start + d.dMin, 0, 1440 - SNAP);
+        update(d.id, { date: addDays(d.date, d.dDay), start, end: (start + dur) % 1440 });
+      } else {
+        const nd = clamp(dur + d.dMin, SNAP, 1440 - SNAP);
+        update(d.id, { end: (d.start + nd) % 1440 });
+      }
     } else {
-      const nd = clamp(dur + d.dMin, SNAP, 1440 - SNAP);
-      update(s.id, { end: (s.start + nd) % 1440 });
+      // une tâche ou une note : un autre jour, une autre heure
+      update(d.id, { date: addDays(d.date, d.dDay), time: clamp(d.start + d.dMin, 0, 1440 - SNAP) });
     }
   };
 
-  /** Sur un écran tactile : toucher un vide crée un créneau d'une heure */
+  /** Sur un écran tactile : toucher un vide ajoute un créneau d'une heure (le panneau propose d'en faire autre chose) */
   const onGridTap = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (lockedView || (e.nativeEvent as PointerEvent).pointerType !== 'touch') return;
+    if ((e.nativeEvent as PointerEvent).pointerType !== 'touch') return;
     if ((e.target as HTMLElement).closest('[data-block]')) return;
     const p = at(e);
     const from = clamp(Math.floor(p.min / 30) * 30, 0, 1440 - 60);
     create(p.day, from, from + 60);
   };
 
-  const blockDown = (e: RPointerEvent<HTMLElement>, s: Slot, mode: 'move' | 'resize') => {
+  const blockDown = (e: RPointerEvent<HTMLElement>, id: string, kind: Kind, mode: 'move' | 'resize') => {
     if (e.button !== 0) return;
     e.stopPropagation();
-    if (e.pointerType === 'touch' || lockedView) {
-      setSel(s.id);
+    if (e.pointerType === 'touch') {
+      open(id);
       return;
     }
+    const ent = useData.getState().entities[id];
+    if (!ent) return;
+    const date = ent.type === 'slot' ? ent.date : ent.type === 'task' || ent.type === 'note' ? ent.date : null;
+    const start = ent.type === 'slot' ? ent.start : ent.type === 'task' || ent.type === 'note' ? ent.time : null;
+    if (!date || start == null) return;
     gridRef.current?.setPointerCapture(e.pointerId);
-    setDrag({ mode, id: s.id, x0: e.clientX, y0: e.clientY, dDay: 0, dMin: 0, moved: false, slot: s });
+    setDrag({ mode, id, kind, x0: e.clientX, y0: e.clientY, dDay: 0, dMin: 0, moved: false, date, start, end: ent.type === 'slot' ? ent.end : start + ITEM_MIN });
+  };
+
+  /** Glisser une tâche depuis « À planifier » : dans la grille (un jour, une heure) ou « toute la journée » */
+  const planHit = (x: number, y: number): PlanDrag['at'] => {
+    const g = gridRef.current?.getBoundingClientRect();
+    const sc = scrollRef.current?.getBoundingClientRect();
+    const ad = allDayRef.current?.getBoundingClientRect();
+    const dayAt = (r: DOMRect) => clamp(Math.floor((x - r.left - GUTTER) / ((r.width - GUTTER) / 7)), 0, 6);
+    if (ad && x >= ad.left + GUTTER && x <= ad.right && y >= ad.top && y <= ad.bottom) return { day: dayAt(ad), min: null };
+    if (g && sc && x >= g.left + GUTTER && x <= g.right && y >= sc.top && y <= sc.bottom) {
+      return { day: dayAt(g), min: clamp(Math.floor((((y - g.top) / HOUR) * 60) / SNAP) * SNAP, 0, 1440 - SNAP) };
+    }
+    return null;
+  };
+  const planStart = (t: Task, e: RPointerEvent<HTMLElement>) => {
+    if (e.button !== 0) return;
+    // au doigt : la liste défile, un toucher ouvre la tâche (pour lui donner un jour)
+    if (e.pointerType === 'touch') {
+      const x0 = e.clientX;
+      const y0 = e.clientY;
+      const end = (ev: PointerEvent) => {
+        window.removeEventListener('pointerup', end);
+        window.removeEventListener('pointercancel', end);
+        // la liste a défilé (pointercancel) ou le doigt a bougé : ce n'est pas un toucher
+        if (ev.type === 'pointerup' && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 10) open(t.id);
+      };
+      window.addEventListener('pointerup', end);
+      window.addEventListener('pointercancel', end);
+      return;
+    }
+    const x0 = e.clientX;
+    const y0 = e.clientY;
+    let moved = false;
+    const move = (ev: PointerEvent) => {
+      if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 6) return;
+      moved = true;
+      setPlan({ id: t.id, x: ev.clientX, y: ev.clientY, at: planHit(ev.clientX, ev.clientY) });
+    };
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      setPlan(null);
+      if (!moved) {
+        open(t.id);
+        return;
+      }
+      const hit = ev.type === 'pointerup' ? planHit(ev.clientX, ev.clientY) : null;
+      if (hit) useData.getState().update(t.id, { date: week[hit.day], time: hit.min });
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
   };
 
   const isToday = (i: number) => week[i] === today;
   const ghost = drag?.mode === 'create' && drag.moved ? { day: drag.day, from: Math.min(drag.anchor, drag.cur), to: Math.max(drag.anchor + SNAP, drag.cur) } : null;
+  const planned = plan ? (entities[plan.id] as Task | undefined) : undefined;
+  const isFresh = !!selected && fresh.current?.id === selected.id;
+  const trayOverlay = narrow;
 
   return (
-    <div className="fixed inset-0 z-30 anim-fade" data-ui data-week>
+    <div className={`fixed inset-0 z-30 anim-fade ${plan ? 'cursor-grabbing select-none' : ''}`} data-ui data-week data-agenda>
       <div className="backdrop bg-black/85" onClick={() => setView('network')} />
       <div className="absolute inset-x-4 top-4 bottom-4 max-md:inset-x-2 max-md:top-2 max-md:bottom-2 flex flex-col">
-        {/* en-tête : la semaine, son total, navigation */}
+        {/* en-tête : la semaine, son résumé, navigation, ajouter */}
         <div className="flex items-end justify-between mb-3 gap-4 flex-wrap">
           <div>
-            <div className="hud text-[10px] text-[#ffb020]">Emploi du temps</div>
+            <div className="hud text-[10px] text-[#ffb020]">Agenda</div>
             <div className="text-[24px] max-md:text-[18px] font-semibold tracking-tight text-white mt-1">
               {weekTitle(monday)}
-              <span className="mono text-[13px] font-normal text-white/45 ml-3">{weekTotal ? `${fmtHM(weekTotal)} planifiées` : 'aucun créneau'}</span>
+              <span className="mono text-[13px] max-md:text-[11px] font-normal text-white/45 ml-3 max-md:ml-0 max-md:block">
+                {weekTotal ? `${fmtHM(weekTotal)} de créneaux` : 'aucun créneau'}
+                {counts.tasks ? ` · ${counts.tasks} tâche${counts.tasks > 1 ? 's' : ''}` : ''}
+                {counts.notes ? ` · ${counts.notes} note${counts.notes > 1 ? 's' : ''}` : ''}
+              </span>
             </div>
           </div>
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-2 flex-wrap items-center">
             <button className="btn" title="Semaine précédente" onClick={() => setMonday(addDays(monday, -7))}>
               ‹
             </button>
@@ -354,19 +651,28 @@ function Week() {
             <button className="btn" title="Semaine suivante" onClick={() => setMonday(addDays(monday, 7))}>
               ›
             </button>
-            {!lockedView && (
-              <button
-                className="btn btn-primary"
-                style={cvar('#ffb020')}
-                onClick={() => {
-                  const i = week.includes(today) ? week.indexOf(today) : 0;
-                  const from = week.includes(today) ? clamp(Math.ceil(now / SNAP) * SNAP, 0, 1440 - 60) : 9 * 60;
-                  create(i, from, from + 60);
-                }}
-              >
-                + Créneau
+            <button className={`btn ${planOpen ? 'btn-primary' : ''}`} style={cvar('#00e5ff')} onClick={togglePlan} data-plan-toggle title="Les tâches sans date, à glisser dans la semaine">
+              À planifier · {toPlan.length}
+            </button>
+            <div className="relative">
+              <button className="btn btn-primary" style={cvar('#ffb020')} onClick={() => setMenu((m) => !m)} data-agenda-add aria-expanded={menu}>
+                + Ajouter ▾
               </button>
-            )}
+              {menu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setMenu(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-50 glass neon bg-[rgb(7_7_12/0.97)] p-1.5 flex flex-col min-w-[190px] anim-pop" style={cvar('#ffb020')} data-agenda-add-menu>
+                    {ADD_TYPES.map((t) => (
+                      <button key={t} className="flex items-center gap-2.5 px-3 py-2 text-left hover:bg-white/[0.06] text-[13px] text-white/85" style={cvar(TYPE_ACCENT[t])} onClick={() => addNow(t)} data-add-type={t}>
+                        <span className="dot" />
+                        {TYPE_LABEL[t]}
+                        <span className="mono text-[9px] text-white/35 ml-auto">{t === 'project' ? 'échéance' : t === 'slot' ? 'durée' : 'jour · heure'}</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
             <button className="btn" onClick={() => setView('network')}>
               ← Réseau <span className="text-white/35 ml-1 max-md:hidden">Tab</span>
             </button>
@@ -374,48 +680,56 @@ function Week() {
         </div>
 
         <div className="flex-1 min-h-0 flex gap-3 relative">
+          {planOpen && <PlanTray tasks={toPlan} onOpen={open} onDragStart={planStart} overlay={trayOverlay} onClose={togglePlan} />}
           <div className="flex-1 min-w-0 glass bg-[rgb(7_7_12/0.94)] flex flex-col min-h-0">
             {/* jours */}
             <div className="flex border-b border-white/[0.08] flex-none" style={{ paddingLeft: GUTTER }}>
               {week.map((d, i) => {
                 const dt = fromISODate(d);
                 return (
-                  <div key={d} className={`flex-1 min-w-0 px-2 py-2 border-l border-white/[0.06] ${isToday(i) ? 'bg-[#00e5ff]/[0.07]' : ''}`}>
-                    <div className={`hud text-[10.5px] ${isToday(i) ? 'text-[#00e5ff]' : i >= 5 ? 'text-white/45' : 'text-white/75'}`}>
+                  <div key={d} className={`flex-1 min-w-0 px-2 max-md:px-1 py-2 border-l border-white/[0.06] ${isToday(i) ? 'bg-[#00e5ff]/[0.07]' : ''}`}>
+                    <div className={`hud text-[10.5px] max-md:text-[9px] max-md:tracking-[0.06em] ${isToday(i) ? 'text-[#00e5ff]' : i >= 5 ? 'text-white/45' : 'text-white/75'}`}>
                       {DAY_SHORT[dt.getDay()]} {dt.getDate()}
                     </div>
-                    <div className="mono text-[9.5px] text-white/35 mt-0.5 truncate">{totals[i] ? fmtHM(totals[i]) : '—'}</div>
+                    <div className="mono text-[9.5px] text-white/35 mt-0.5 truncate max-md:hidden">{totals[i] ? fmtHM(totals[i]) : '—'}</div>
                   </div>
                 );
               })}
             </div>
-            {/* toute la journée : tâches datées sans heure, échéances des projets */}
-            {allDay.some((x) => x.length) && (
-              <div className="flex border-b border-white/[0.08] flex-none max-h-[84px] overflow-y-auto scroll-thin" style={{ paddingLeft: GUTTER }}>
-                {allDay.map((items, i) => (
-                  <div key={week[i]} className="flex-1 min-w-0 px-1 py-1 border-l border-white/[0.06] flex flex-col gap-1">
-                    {items.map((e) => (
-                      <button
-                        key={e.id}
-                        onClick={() => openEntity(e.id)}
-                        className="text-left truncate mono text-[9.5px] tracking-[0.04em] px-1.5 py-0.5 border border-[rgb(var(--c)/0.5)] bg-[rgb(var(--c)/0.1)] text-white/85 hover:bg-[rgb(var(--c)/0.2)]"
-                        style={cvar(e.color)}
-                        title={e.type === 'project' ? `Échéance du projet ${displayTitle(e)}` : `Tâche : ${displayTitle(e)}`}
-                      >
-                        {e.type === 'project' ? '⚑ ' : e.status === 'done' ? '✓ ' : '◆ '}
-                        <span className={e.type === 'task' && e.status === 'done' ? 'line-through opacity-60' : ''}>{displayTitle(e)}</span>
-                      </button>
-                    ))}
-                  </div>
-                ))}
+            {/* toute la journée : tâches et notes datées sans heure, échéances des projets */}
+            <div ref={allDayRef} className="flex border-b border-white/[0.08] flex-none max-h-[96px] overflow-y-auto scroll-thin relative" data-all-day>
+              <div className="flex-none flex items-start justify-end pr-1 pt-1.5 mono text-[8.5px] tracking-[0.1em] text-white/30" style={{ width: GUTTER }}>
+                JOURNÉE
               </div>
-            )}
+              {allDay.map((items, i) => (
+                <div
+                  key={week[i]}
+                  className={`flex-1 min-w-0 px-1 py-1 border-l border-white/[0.06] flex flex-col gap-1 min-h-[30px] ${plan?.at && plan.at.min === null && plan.at.day === i ? 'bg-[#00e5ff]/[0.12]' : ''}`}
+                >
+                  {items.map((e) => (
+                    <button
+                      key={e.id}
+                      onClick={() => open(e.id)}
+                      data-all-day-item={e.id}
+                      className={`text-left truncate mono text-[9.5px] tracking-[0.04em] px-1.5 py-0.5 border bg-[rgb(var(--c)/0.1)] text-white/85 hover:bg-[rgb(var(--c)/0.2)] ${
+                        e.type === 'note' ? 'border-dotted border-[rgb(var(--c)/0.7)]' : 'border-[rgb(var(--c)/0.5)]'
+                      } ${sel === e.id ? 'shadow-[0_0_0_1px_rgb(var(--c))]' : ''}`}
+                      style={cvar(e.color)}
+                      title={e.type === 'project' ? `Échéance du projet ${displayTitle(e)}` : `${TYPE_LABEL[e.type]} : ${displayTitle(e)}`}
+                    >
+                      {e.type === 'project' ? '⚑ ' : e.type === 'note' ? '✎ ' : e.status === 'done' ? '✓ ' : '◆ '}
+                      <span className={e.type === 'task' && e.status === 'done' ? 'line-through opacity-60' : ''}>{displayTitle(e)}</span>
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
             {/* la grille des heures */}
             <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto scroll-thin relative">
               <div
                 ref={gridRef}
                 className="relative select-none"
-                style={{ height: 24 * HOUR, cursor: lockedView ? 'default' : 'crosshair', touchAction: drag ? 'none' : 'pan-y' }}
+                style={{ height: 24 * HOUR, cursor: 'crosshair', touchAction: drag ? 'none' : 'pan-y' }}
                 onPointerDown={onGridDown}
                 onPointerMove={onGridMove}
                 onPointerUp={onGridUp}
@@ -436,7 +750,7 @@ function Week() {
                     <div key={d} className={`flex-1 border-l border-white/[0.06] ${isToday(i) ? 'bg-[#00e5ff]/[0.035]' : i >= 5 ? 'bg-white/[0.015]' : ''}`} />
                   ))}
                 </div>
-                {/* les créneaux */}
+                {/* créneaux, tâches et notes */}
                 <div className="absolute top-0 bottom-0 right-0" style={{ left: GUTTER }}>
                   {segs.map((g) => {
                     const e = entities[g.id];
@@ -460,22 +774,30 @@ function Week() {
                       left: `calc(${day * w}% + ${(g.lane / g.lanes) * (100 / 7)}% + 2px)`,
                       width: `calc(${w / g.lanes}% - 4px)`,
                     };
-                    if (g.kind === 'task') {
-                      const t = e as Task;
+                    if (g.kind === 'task' || g.kind === 'note') {
+                      const isTask = e.type === 'task';
+                      const t = e as Task | Note;
+                      const done = isTask && (e as Task).status === 'done';
                       return (
-                        <button
+                        <div
                           key={g.key}
                           data-block
-                          className="absolute text-left px-1.5 border border-dashed border-[rgb(var(--c)/0.7)] bg-black/50 hover:bg-[rgb(var(--c)/0.12)] overflow-hidden"
-                          style={{ ...style, height: 20 }}
-                          onPointerDown={(ev) => ev.stopPropagation()}
-                          onClick={() => openEntity(t.id)}
-                          title={`Tâche · ${displayTitle(t)} · ${fmtTime(t.time)}`}
+                          data-agenda-item={g.id}
+                          data-kind={g.kind}
+                          role="button"
+                          tabIndex={0}
+                          className={`absolute text-left px-1.5 border bg-black/55 hover:bg-[rgb(var(--c)/0.14)] overflow-hidden flex items-center ${
+                            isTask ? 'border-dashed border-[rgb(var(--c)/0.7)]' : 'border-dotted border-[rgb(var(--c)/0.85)]'
+                          } ${sel === g.id ? 'shadow-[0_0_0_1px_rgb(var(--c)),0_0_18px_rgb(var(--c)/0.45)]' : ''} ${moving ? 'opacity-85 z-10' : ''}`}
+                          style={{ ...style, height: 20, cursor: moving ? 'grabbing' : 'grab' }}
+                          onPointerDown={(ev) => blockDown(ev, g.id, g.kind, 'move')}
+                          onKeyDown={(ev) => ev.key === 'Enter' && open(g.id)}
+                          title={`${TYPE_LABEL[e.type]} · ${displayTitle(e)} · ${fmtTime(t.time)}`}
                         >
-                          <span className={`mono text-[9.5px] text-white/85 truncate block ${t.status === 'done' ? 'line-through opacity-60' : ''}`}>
-                            ◆ {fmtTime(t.time)} {displayTitle(t)}
+                          <span className={`mono text-[9.5px] text-white/85 truncate block pointer-events-none ${done ? 'line-through opacity-60' : ''}`}>
+                            {isTask ? '◆' : '✎'} {fmtTime(moving ? from : t.time)} {displayTitle(e)}
                           </span>
-                        </button>
+                        </div>
                       );
                     }
                     const s = e as Slot;
@@ -490,8 +812,8 @@ function Week() {
                         className={`absolute overflow-hidden border-l-[3px] border-[rgb(var(--c))] bg-[rgb(var(--c)/0.16)] hover:bg-[rgb(var(--c)/0.24)] transition-colors ${
                           sel === s.id ? 'shadow-[0_0_0_1px_rgb(var(--c)),0_0_22px_rgb(var(--c)/0.45)]' : ''
                         } ${moving ? 'opacity-85 z-10' : ''}`}
-                        style={{ ...style, cursor: lockedView ? 'pointer' : moving ? 'grabbing' : 'grab' }}
-                        onPointerDown={(ev) => blockDown(ev, s, 'move')}
+                        style={{ ...style, cursor: moving ? 'grabbing' : 'grab' }}
+                        onPointerDown={(ev) => blockDown(ev, s.id, 'slot', 'move')}
                       >
                         <div className="px-2 py-1 pointer-events-none">
                           <div className="text-[12px] font-semibold text-white truncate leading-tight">{name}</div>
@@ -502,8 +824,8 @@ function Week() {
                           )}
                           {h >= 1.1 && s.title.trim() && <div className="mono text-[9.5px] text-[rgb(var(--c))] truncate mt-0.5">{proj ? displayTitle(proj) : 'Sans projet'}</div>}
                         </div>
-                        {!g.cont && !lockedView && (
-                          <div className="absolute left-0 right-0 bottom-0 h-[7px] cursor-ns-resize" onPointerDown={(ev) => blockDown(ev, s, 'resize')} title="Glisser pour changer la durée" />
+                        {!g.cont && (
+                          <div className="absolute left-0 right-0 bottom-0 h-[7px] cursor-ns-resize" onPointerDown={(ev) => blockDown(ev, s.id, 'slot', 'resize')} title="Glisser pour changer la durée" />
                         )}
                       </div>
                     );
@@ -519,6 +841,15 @@ function Week() {
                       </div>
                     </div>
                   )}
+                  {/* une tâche glissée depuis « À planifier » : là où elle tomberait */}
+                  {plan?.at && plan.at.min !== null && planned && (
+                    <div
+                      className="absolute border border-dashed border-[rgb(var(--c))] bg-[rgb(var(--c)/0.18)] pointer-events-none z-20"
+                      style={{ ...cvar(planned.color), top: (plan.at.min / 60) * HOUR + 1, height: 20, left: `calc(${(plan.at.day * 100) / 7}% + 2px)`, width: `calc(${100 / 7}% - 4px)` }}
+                    >
+                      <span className="mono text-[9.5px] text-white px-1.5">◆ {fmtTime(plan.at.min)}</span>
+                    </div>
+                  )}
                   {/* maintenant */}
                   {week.includes(today) && (
                     <div className="absolute h-0 pointer-events-none z-20" style={{ top: (now / 60) * HOUR, left: `${(week.indexOf(today) * 100) / 7}%`, width: `${100 / 7}%` }}>
@@ -530,18 +861,29 @@ function Week() {
               </div>
             </div>
           </div>
-          {selected && selected.type === 'slot' && <SlotPanel key={selected.id} s={selected} onClose={close} />}
+          {selected && <AgendaPanel key={selected.id} e={selected} fresh={isFresh} onConvert={convert} onClose={close} />}
         </div>
 
         <div className="hud text-[9px] text-white/30 mt-2.5 flex gap-4 justify-center flex-wrap max-md:hidden">
-          <span>Glisse dans la grille pour créer un créneau</span>
-          <span>Glisse un créneau pour le déplacer · son bas pour changer sa durée</span>
+          <span>Glisse dans la grille pour ajouter (créneau, tâche, note, projet)</span>
+          <span>Glisse un élément pour le déplacer · le bas d’un créneau pour sa durée</span>
           <span>Clic pour l’ouvrir</span>
           <span>
             <Kbd>Tab</Kbd> fermer
           </span>
         </div>
       </div>
+
+      {/* la tâche glissée suit le pointeur */}
+      {plan && planned && (
+        <div
+          className="fixed z-50 pointer-events-none glass px-2.5 py-1.5 rotate-[1.5deg] shadow-[0_12px_40px_rgb(0_0_0/0.6),0_0_24px_rgb(var(--c)/0.35)] border-[rgb(var(--c)/0.7)] mono text-[11px] text-white/90 max-w-[220px] truncate"
+          style={cvar(planned.color, { left: plan.x + 12, top: plan.y + 8 })}
+        >
+          ◆ {displayTitle(planned)}
+          {plan.at ? <span className="text-[rgb(var(--c))]"> · {DAY_SHORT[fromISODate(week[plan.at.day]).getDay()]} {plan.at.min !== null ? fmtTime(plan.at.min) : 'journée'}</span> : null}
+        </div>
+      )}
     </div>
   );
 }

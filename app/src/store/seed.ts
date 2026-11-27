@@ -33,9 +33,12 @@ export function buildSeed(): { entities: Record<string, Entity>; links: Link[] }
     entities[t.id] = t;
     return t;
   };
-  const note = (title: string, color: string, tags: string[], content: string, projectId: string | null = null): Note => {
+  const note = (
+    title: string, color: string, tags: string[], content: string, projectId: string | null = null,
+    date: string | null = null, time: number | null = null,
+  ): Note => {
     const at = stamp();
-    const x: Note = { id: uid(), type: 'note', title, color, tags, content, projectId, createdAt: at, updatedAt: at, seed: true };
+    const x: Note = { id: uid(), type: 'note', title, color, tags, content, projectId, date, time, createdAt: at, updatedAt: at, seed: true };
     entities[x.id] = x;
     return x;
   };
@@ -73,15 +76,16 @@ export function buildSeed(): { entities: Record<string, Entity>; links: Link[] }
 
   const startup = note('Idée startup', '#a855f7', ['idee', 'business'],
     "Un assistant qui transforme les notes vocales en tâches planifiées.\n\nCible : indépendants débordés.\nModèle : abonnement mensuel, essai gratuit 14 jours.\n\nQuestions ouvertes :\n- comment gérer la confidentialité ?\n- intégration agenda dès la v1 ?");
+  // V8 : une note peut avoir sa place dans l'agenda (toute la journée, ou à une heure)
   const journal = note('Journal — semaine 47', '#c084fc', ['personnel'],
-    "Bonne énergie cette semaine. Le rythme deep work le matin fonctionne vraiment.\n\nÀ garder : pas d'écran après 23h.");
+    "Bonne énergie cette semaine. Le rythme deep work le matin fonctionne vraiment.\n\nÀ garder : pas d'écran après 23h.", null, today);
   const refs = note('Références design néon', '#e879f9', ['design', 'projet'],
     'Fonds noirs purs, accents néon saturés, typo mono pour les labels.\nGlow léger, jamais criard. Liserés fins sur les panneaux.');
   const livres = note('Livres à lire', '#60a5fa', ['personnel', 'liste'],
     '- Le Problème à trois corps\n- Deep Work — Cal Newport\n- Shape Up — Basecamp');
   // une note qui appartient à un projet (les autres sont des notes indépendantes)
   const sprint = note('Plan sprint 12', '#ff4d6d', ['projet', 'urgent'],
-    "Priorité : onboarding complet + premiers retours.\nBloquant : choix du fournisseur d'auth.", app.id);
+    "Priorité : onboarding complet + premiers retours.\nBloquant : choix du fournisseur d'auth.", app.id, addDays(today, 1), 10 * 60 + 30);
 
   const s1 = slot('Deep work — onboarding', '#ff2e88', today, '09:12', '11:47', app.id);
   slot('Déjeuner', '#facc15', today, '12:01', '13:08');

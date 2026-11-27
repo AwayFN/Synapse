@@ -35,8 +35,11 @@ function createFromParsed(p: Parsed): Entity | null {
   const proj = p.type !== 'project' ? refs.find((r) => r.type === 'project') : undefined;
   const others = refs.filter((r) => r !== proj).map((r) => r.id);
   switch (p.type) {
-    case 'note':
-      return d.createNote({ title: p.title, tags: p.tags, projectId: proj?.id ?? null }, { linkTo: others });
+    case 'note': {
+      // V8 : « note Compte rendu demain 14h » : la note a sa place dans l'agenda
+      const time = p.time ?? p.start;
+      return d.createNote({ title: p.title, tags: p.tags, projectId: proj?.id ?? null, date: p.date ?? (time != null ? today : null), time }, { linkTo: others });
+    }
     case 'task': {
       const time = p.time ?? p.start;
       return d.createTask({ title: p.title, projectId: proj?.id ?? null, date: p.date ?? (time != null ? today : null), time, tags: p.tags }, { linkTo: others });
@@ -106,15 +109,24 @@ function Palette() {
   const rows: Row[] = useMemo(() => {
     const ui = useUI.getState();
     const cmds: Row[] = [
-      { kind: 'cmd', id: 'agenda', label: 'Vue agenda · emploi du temps', hint: 'TAB', run: () => ui.setView('agenda') },
+      { kind: 'cmd', id: 'agenda', label: 'Agenda · la semaine : créneaux, tâches, notes, projets', hint: 'TAB', run: () => ui.setView('agenda') },
       { kind: 'cmd', id: 'tasks', label: 'Vue tâches · kanban', hint: '⇧TAB', run: () => ui.setView('tasks') },
       { kind: 'cmd', id: 'notes', label: 'Vue notes · toutes les notes, indépendantes ou par projet', run: () => ui.setView('notes') },
       { kind: 'cmd', id: 'network', label: 'Vue réseau', hint: 'ÉCHAP', run: () => ui.setView('network') },
       { kind: 'cmd', id: 'overview', label: "Vue d'ensemble · recentrer la caméra", hint: 'H', run: () => { ui.setView('network'); fx.emit({ kind: 'overview' }); } },
       { kind: 'cmd', id: 'home', label: 'Revenir aux neurones · tout de suite', hint: '◎', run: () => { ui.setView('network'); fx.emit({ kind: 'home' }); } },
+      {
+        kind: 'cmd',
+        id: 'network-settings',
+        label: 'Réglages du réseau · distance entre les neurones, neurones posés à la main',
+        run: () => {
+          ui.setView('network');
+          ui.setNetworkOpen(true);
+        },
+      },
       { kind: 'cmd', id: 'newnote', label: 'Nouvelle note vide', hint: 'CTRL N', run: () => newNote() },
-      { kind: 'cmd', id: 'export', label: 'Exporter mes données (JSON)', run: exportData },
-      { kind: 'cmd', id: 'import', label: 'Importer des données (JSON)', run: importData },
+      { kind: 'cmd', id: 'export', label: 'Exporter mes données · un fichier .json (sauvegarde, ou pour un autre appareil)', run: () => void exportData() },
+      { kind: 'cmd', id: 'import', label: 'Importer des données · depuis un fichier .json exporté', run: importData },
       { kind: 'cmd', id: 'help', label: 'Aide · raccourcis & syntaxe', hint: '?', run: () => ui.setHelp(true) },
     ];
     if (activeTags.length) cmds.push({ kind: 'cmd', id: 'cleartags', label: 'Effacer le filtre de tags', run: () => ui.clearTags() });

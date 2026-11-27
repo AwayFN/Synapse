@@ -1,0 +1,6 @@
+# Composants installés par npm (Electron…) : recréés par « npm ci »
+node_modules/
+# L'application compilée, copiée depuis app/dist au moment de construire l'installateur
+web/
+# L'installateur construit (Synapse-Setup.exe) : publié sur la page « Releases » de GitHub, pas dans le code
+release/

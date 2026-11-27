@@ -2,26 +2,22 @@ plugins {
     id 'com.android.application'
 }
 
-// Réglages passés par la construction automatique sur GitHub (.github/workflows/android.yml) :
-//   -PversionName=7.1.0 -PversionCode=70100 -PsynapseDepot=AwayFN/Synapse -PsynapseAdresse=https://…
+// Réglages passés par la construction automatique sur GitHub (.github/workflows/synapse.yml) :
+//   -PversionName=8.0.0 -PversionCode=80000
 def prop = { String name, String fallback -> (project.findProperty(name) ?: fallback).toString() }
-def depot = prop('synapseDepot', 'AwayFN/Synapse')
-def adresse = prop('synapseAdresse', '')
 def keystore = System.getenv('SYNAPSE_KEYSTORE_FILE')
 def signed = keystore != null && new File(keystore).exists()
 
-// V7 : Synapse lui-même (l'application compilée, app/dist) est DANS l'APK : il marche sur le téléphone sans serveur.
+// Synapse lui-même (l'application compilée, app/dist) est DANS l'APK : il marche sur le téléphone, sans réseau.
 // Copié à chaque construction dans les « assets » (dossier web/), servi par MainActivity.
 def webDist = new File(rootDir, '../app/dist')
 def webOut = layout.buildDirectory.dir('generated/synapse-web').get().asFile
 def copySynapseWeb = tasks.register('copySynapseWeb', Copy) {
-    from(webDist) {
-        exclude '.synapse-build'
-    }
+    from(webDist)
     into(new File(webOut, 'web'))
     doFirst {
         if (!new File(webDist, 'index.html').exists()) {
-            throw new GradleException("app/dist/index.html introuvable : compile d'abord Synapse (node app/scripts/synapse.mjs --build)")
+            throw new GradleException("app/dist/index.html introuvable : compile d'abord Synapse (dans app/ : npm run build)")
         }
     }
 }
@@ -41,14 +37,8 @@ android {
         applicationId 'io.github.awayfn.synapse'
         minSdk 26
         targetSdk 35
-        versionCode prop('versionCode', '70100').toInteger()
-        versionName prop('versionName', '7.1.0')
-        // le dépôt GitHub où le Synapse central publie son adresse (branche synapse-adresse, fichier adresse.json)
-        buildConfigField 'String', 'DEPOT', "\"${depot}\""
-        buildConfigField 'String', 'BRANCHE', '"synapse-adresse"'
-        buildConfigField 'String', 'FICHIER', '"adresse.json"'
-        // une adresse fixe (hébergeur, domaine), si le Synapse central en a une (app/central.json)
-        buildConfigField 'String', 'ADRESSE_FIXE', "\"${adresse}\""
+        versionCode prop('versionCode', '80000').toInteger()
+        versionName prop('versionName', '8.0.0')
     }
 
     buildFeatures {
@@ -57,7 +47,7 @@ android {
 
     signingConfigs {
         // une clé de signature permanente (secret GitHub SYNAPSE_KEYSTORE_BASE64) : les mises à jour s'installent
-        // par-dessus l'ancienne version. Sans elle, chaque version est signée avec une clé de construction.
+        // par-dessus l'ancienne version, sans rien perdre. Sans elle, chaque version est signée avec une clé de construction.
         stable {
             if (signed) {
                 storeFile file(keystore)

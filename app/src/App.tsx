@@ -11,14 +11,12 @@ import { NoteEditor } from './ui/NoteEditor';
 import { CommandPalette } from './ui/CommandPalette';
 import { Toasts } from './ui/Toasts';
 import { Help } from './ui/Help';
-import { ShareDialog } from './ui/ShareDialog';
-import { PresenceTags } from './ui/Presence';
-import { SessionOverlay } from './ui/Gate';
-import { AccountPanel, AnnouncementBar, FeedbackDialog } from './ui/Account';
-import { AdminPanel } from './ui/Admin';
+import { NetworkSettings } from './ui/NetworkSettings';
 import { useHotkeys } from './hooks/useHotkeys';
 import { setStorageErrorHandler } from './store/storage';
 import { useUI } from './store/ui';
+import { desktop } from './lib/device';
+import { installAndroidBackup } from './lib/backup';
 
 export function App() {
   useHotkeys();
@@ -26,6 +24,13 @@ export function App() {
     setStorageErrorHandler(() =>
       useUI.getState().toast({ text: 'STOCKAGE PLEIN · EXPORTEZ VOS DONNÉES (CTRL K)', color: '#ff4d6d' }, 8000),
     );
+    // application Android : une copie de sauvegarde automatique dans Documents/Synapse
+    installAndroidBackup();
+    // application Windows, premier lancement : le réseau de la version précédente (sur ce PC) a été repris
+    const m = desktop()?.migrated;
+    if (m && m.count > 0) {
+      window.setTimeout(() => useUI.getState().toast({ text: `TON RÉSEAU EST LÀ · ${m.count} ÉLÉMENTS REPRIS DE LA VERSION PRÉCÉDENTE`, color: '#39ff88' }, 9000), 1200);
+    }
   }, []);
   return (
     <div className="fixed inset-0 bg-black">
@@ -34,22 +39,16 @@ export function App() {
           <Scene />
         </SceneGuard>
         <LabelLayer />
-        <PresenceTags />
         <Hud />
       </div>
       <DetailPanel />
+      <NetworkSettings />
       <KanbanView />
       <AgendaView />
       <NotesView />
       <NoteEditor />
       <CommandPalette />
-      <ShareDialog />
-      <AccountPanel />
-      <FeedbackDialog />
-      <AdminPanel />
-      <AnnouncementBar />
       <Help />
-      <SessionOverlay />
       <Toasts />
     </div>
   );

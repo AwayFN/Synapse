@@ -22,6 +22,8 @@ export interface UIState {
   paletteOpen: boolean;
   paletteSeed: string;
   helpOpen: boolean;
+  /** les réglages du réseau (distance entre les neurones, neurones déplacés à la main) */
+  networkOpen: boolean;
   activeTags: string[];
   hiddenTypes: EntityType[];
   toasts: Toast[];
@@ -34,18 +36,22 @@ export interface UIState {
   closePanel: () => void;
   setFocus: (id: string | null) => void;
   setHovered: (id: string | null) => void;
-  /** l'éditeur en grand ; keepView : reste dans la vue ouverte (notes, tâches, emploi du temps) au lieu du réseau */
+  /** l'éditeur en grand ; keepView : reste dans la vue ouverte (notes, tâches, agenda) au lieu du réseau */
   openEditor: (id: string, opts?: { keepView?: boolean }) => void;
   closeEditor: () => void;
   openPalette: (seed?: string) => void;
   closePalette: () => void;
   setHelp: (open: boolean) => void;
+  setNetworkOpen: (open: boolean) => void;
   toggleTag: (tag: string) => void;
   clearTags: () => void;
   toggleType: (t: EntityType) => void;
   toast: (t: Omit<Toast, 'id'>, ms?: number) => void;
   dismissToast: (id: string) => void;
 }
+
+/** Les réglages du réseau ne se montrent (et ne comptent pour Échap et Tab) que sur le réseau, sans éditeur ouvert */
+export const networkSettingsVisible = (s: Pick<UIState, 'networkOpen' | 'view' | 'editorId'>) => s.networkOpen && s.view === 'network' && !s.editorId;
 
 export const useUI = create<UIState>()((set, get) => ({
   view: 'network',
@@ -56,6 +62,7 @@ export const useUI = create<UIState>()((set, get) => ({
   paletteOpen: false,
   paletteSeed: '',
   helpOpen: false,
+  networkOpen: false,
   activeTags: [],
   hiddenTypes: [],
   toasts: [],
@@ -104,6 +111,7 @@ export const useUI = create<UIState>()((set, get) => ({
   openPalette: (seed = '') => set({ paletteOpen: true, paletteSeed: seed }),
   closePalette: () => set({ paletteOpen: false, paletteSeed: '' }),
   setHelp: (open) => set({ helpOpen: open }),
+  setNetworkOpen: (open) => set({ networkOpen: open }),
   toggleTag: (tag) =>
     set((s) => ({
       activeTags: s.activeTags.includes(tag) ? s.activeTags.filter((t) => t !== tag) : [...s.activeTags, tag],

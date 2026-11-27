@@ -1,90 +1,71 @@
 # Synapse
 
-**Ton réseau personnel, en 3D.** Projets, tâches, notes et créneaux, tous reliés : tu voles au milieu de tes idées, et tu retrouves tout par les liens. Sur ton téléphone, sur ton PC, ou les deux, avec ton compte : ce que tu fais sur l’un apparaît aussitôt sur l’autre.
+**Ton réseau personnel, en 3D. 100 % local.** Projets, tâches, notes et créneaux, tous reliés : tu voles au milieu de tes idées, et tu retrouves tout par les liens. Pas de compte, pas d’inscription, pas de connexion : Synapse marche sans Internet, et tes données restent sur ton appareil.
 
 ![Le réseau de Synapse : chaque projet, tâche, note et créneau est une constellation néon, reliée aux autres](apercus/reseau.jpg)
 
 ## Télécharger
 
-### Sur ton téléphone Android
-
-1. Depuis le téléphone, ouvre **[Synapse.apk](https://github.com/AwayFN/Synapse/releases/latest/download/Synapse.apk)** (page des versions : [Releases](https://github.com/AwayFN/Synapse/releases/latest)).
-2. Ouvre le fichier téléchargé. Android demande d’autoriser l’installation d’applications « inconnues » : autorise ton navigateur, puis **Installer**.
-3. Ouvre **Synapse** (l’icône du neurone néon) : **crée ton compte**, ou connecte-toi si tu en as déjà un.
-
-**Pas besoin de PC.** L’application contient Synapse tout entier : elle marche toute seule sur le téléphone, même sans réseau, et même quand aucun PC n’est allumé. Ton compte est enregistré sur le Synapse central dès qu’il répond (s’il ne répond pas au premier lancement, tu crées quand même ton compte et tu commences tout de suite).
-
 ### Sur ton PC (Windows)
 
-1. Installe **Node.js** (gratuit, une seule fois) : [nodejs.org](https://nodejs.org/fr/download), version **LTS**.
-2. **[Télécharge Synapse](https://github.com/AwayFN/Synapse/archive/refs/heads/main.zip)**, puis clic droit sur le fichier téléchargé → **Extraire tout**.
-3. Ouvre le dossier et double-clique sur **Lancer Synapse**.
-4. **Connecte-toi avec le compte de ton téléphone** (même e-mail, même mot de passe) : tu retrouves tout ce que tu y as fait. Ou crée ton compte, si tu commences par le PC (même sans connexion : il sera enregistré dès que possible).
+1. Télécharge **[Synapse-Setup.exe](https://github.com/AwayFN/Synapse/releases/latest/download/Synapse-Setup.exe)** (page des versions : [Releases](https://github.com/AwayFN/Synapse/releases/latest)).
+2. Ouvre le fichier téléchargé : Synapse s’installe tout seul en quelques secondes, puis s’ouvre.
+3. Une icône **Synapse** est maintenant sur ton bureau (et dans le menu Démarrer) : **un double-clic ouvre Synapse**.
 
-**Sur le PC aussi, Synapse marche sans connexion** : l’application vient du dossier Synapse, ton cerveau est gardé sur le PC, et tout se synchronise avec ton téléphone dès que la connexion revient.
+Si Windows affiche « Windows a protégé votre ordinateur » : clique **Informations complémentaires**, puis **Exécuter quand même** (Synapse n’est pas signé par un éditeur payant, c’est normal).
 
-Si Windows demande « Voulez-vous exécuter ce fichier ? », clique **Exécuter**. Si le fichier est bloqué : clic droit sur le `.zip` → **Propriétés** → coche **Débloquer** → OK, puis extrais-le de nouveau.
+Tu avais déjà Synapse (une version d’avant, avec « Lancer Synapse ») sur ce PC, et c’est lui qui gardait ton réseau ? Au premier lancement, ton réseau est **repris automatiquement**, avec la place de chaque neurone. Sur un autre appareil : dans l’ancienne version, `Ctrl K` → **Exporter mes données**, puis dans la nouvelle, **Importer des données**.
 
-## Ton compte, sur tous tes appareils
+### Sur ton téléphone (Android)
 
-- La **première chose** à faire en ouvrant Synapse : **créer ton compte**. Ensuite, c’est bon : tu restes connecté sur cet appareil.
-- **Se déconnecter** (ton prénom en haut à droite → Session) : il faudra se reconnecter avec ton e-mail et ton mot de passe. Sur le téléphone, plus rien de ton compte n’y reste.
-- Le même compte sur ton téléphone et ton PC : **tout se synchronise en direct**. Une note écrite sur le téléphone apparaît sur le PC en une seconde, sans rien relancer.
-- **Sur le téléphone comme sur le PC, Synapse marche aussi sans connexion** : ton cerveau est gardé sur l’appareil. Ce que tu fais hors ligne sur le téléphone arrive sur le PC dès que la connexion revient, et l’inverse. Le point à côté de ton prénom dit où tu en es : **vert**, synchronisé ; **orange**, hors ligne (tes modifications attendent et partent toutes seules dès que le Synapse central répond).
-- Le réseau change (Wi-Fi ↔ câble ↔ 4G/5G), une coupure, une mise en veille : la connexion repart toute seule.
+1. Depuis le téléphone, ouvre **[Synapse.apk](https://github.com/AwayFN/Synapse/releases/latest/download/Synapse.apk)**.
+2. Ouvre le fichier téléchargé. Android demande d’autoriser l’installation d’applications « inconnues » : autorise ton navigateur, puis **Installer**.
+3. Une icône **Synapse** apparaît sur l’écran d’accueil : **un appui l’ouvre**.
+
+Une ancienne version de Synapse est déjà sur le téléphone ? Android refusera peut-être d’installer par-dessus : dans l’ancienne, fais d’abord `Ctrl K` (bouton « Créer · chercher ») → **Exporter mes données** (le fichier va dans Téléchargements), désinstalle-la, installe la nouvelle, puis **Importer** ce fichier.
+
+## 100 % local
+
+- **Aucun compte, aucune inscription, aucune connexion.** Synapse n’envoie rien nulle part : l’application Android n’a même pas la permission d’accéder à Internet, et l’application Windows refuse toute connexion.
+- **Tes données restent sur ton appareil :**
+  - sur Windows, dans `%APPDATA%\Synapse\synapse-donnees.json`, avec **une sauvegarde par jour** (gardée 14 jours) dans `%APPDATA%\Synapse\sauvegardes` ;
+  - sur Android, dans le téléphone, avec **une sauvegarde automatique** dans `Documents/Synapse` (une par jour de la semaine) : elle reste même si tu désinstalles Synapse.
+- **La version Windows et la version Android sont indépendantes** : rien ne se synchronise. Pour copier ton réseau d’un appareil à l’autre (ou le garder ailleurs) : `Ctrl K` → **Exporter mes données** (un fichier `.json`), puis **Importer des données** de l’autre côté.
 
 ## Ce que fait Synapse
 
 - **Le réseau en 3D** : chaque projet, tâche, note et créneau est une constellation néon. Tu voles au milieu (molette, clic droit, ZQSD ; au doigt sur téléphone), tu cliques pour ouvrir.
-- **Revenir aux neurones** : le petit bouton rond ◎ à côté de « Créer · chercher » te ramène devant ton réseau presque instantanément, même de très loin. Il s’allume quand tu t’es éloigné. (Le double-clic dans le vide, lui, fait toujours la vue d’ensemble en douceur.)
+- **Place tes neurones toi-même** : glisse un neurone (au doigt : appui long, puis glisse) ; il reste exactement où tu le poses, même après avoir fermé Synapse (◆ après son nom). « Libérer », dans sa fiche, lui rend sa place automatique.
+- **La distance entre les neurones**, réglable : bouton **Réseau** en haut à droite, un curseur pour les neurones **liés** et un pour les **non liés** (par défaut un peu plus rapprochés qu’avant).
+- **L’agenda** : ta semaine en grille, ton espace d’organisation. Tu y ajoutes des **créneaux**, des **tâches**, des **notes** et des **projets** (leur échéance) : glisse dans la grille, puis choisis ce que c’est. Glisse un élément pour le déplacer. **À planifier** : tes tâches sans date, à glisser dans la semaine.
 - **Écrire en grand** : une note, et aussi la description d’une tâche, d’un projet ou d’un créneau, s’ouvrent sur presque tout l’écran, comme le Bloc-notes. **A− / A+** en bas pour la taille du texte.
-- **Des tags sur tout** : projets, tâches, notes, créneaux. Un clic sur un tag allume ce qui le porte ; `#tag` dans `Ctrl+K` cherche tout ce qui le porte.
-- **Les notes** : une vue avec toutes tes notes, **par projet** ou **indépendantes** (comme les tâches indépendantes), filtrables par tag.
-- **L’emploi du temps** : ta semaine en grille. Glisse pour créer un créneau, pour le déplacer, pour changer sa durée.
+- **Des tags sur tout**, sur PC comme sur téléphone : projets, tâches, notes, créneaux. Un appui sur un tag allume ce qui le porte ; `#tag` dans `Ctrl K` cherche tout ce qui le porte.
+- **Les notes** : une vue avec toutes tes notes, **par projet** ou **indépendantes**, filtrables par tag.
 - **Les tâches** : un tableau à faire / en cours / fait.
-- **Tout se relie** : « + Lier à… » relie n’importe quoi à n’importe quoi. `Ctrl+K` pour créer ou chercher en une phrase : `tâche Appeler Léa @Projet_App demain 14h #urgent`.
+- **Tout se relie** : « + Lier à… » relie n’importe quoi à n’importe quoi. `Ctrl K` pour créer ou chercher en une phrase : `tâche Appeler Léa @Projet_App demain 14h #urgent`.
+- **Revenir aux neurones** : le petit bouton rond ◎ à côté de « Créer · chercher » te ramène devant ton réseau presque instantanément. (Le double-clic dans le vide fait la vue d’ensemble en douceur.)
 - **Échap** (ou le bouton retour du téléphone) ferme ce qui est ouvert, partout.
 
-**L’emploi du temps**, une semaine en grille (touche `Tab`) :
+**L’agenda**, ta semaine en grille (touche `Tab`) :
 
-![L’emploi du temps : la semaine en grille, chaque créneau avec son projet et sa durée](apercus/emploi-du-temps.jpg)
+![L’agenda : la semaine en grille, avec les créneaux, les tâches, les notes et les tâches à planifier](apercus/agenda.jpg)
 
 **Une note**, sur presque tout l’écran (`Ctrl+N`) :
 
-![Une note ouverte en grand, comme le Bloc-notes, avec la barre d’état en bas](apercus/note.jpg)
+![Une note ouverte en grand, comme le Bloc-notes, avec ses tags, son projet, son jour dans l’agenda et la barre d’état en bas](apercus/note.jpg)
 
-## Le Synapse central
+## Pour le créateur
 
-Les comptes vivent sur **un serveur Synapse, le Synapse central** : c’est lui qui permet de retrouver son compte sur tous ses appareils, de partager son cerveau, et à l’admin de voir tout le monde.
+Le code :
 
-- Le Synapse central tourne sur le **PC du créateur** (le premier PC où Synapse a été installé, avec ses données), avec **l’accès Internet ouvert** (Espace admin → Serveur).
-- **Quand ce PC est éteint, tout le monde continue** : Synapse marche sur chaque téléphone et chaque autre PC avec sa copie du cerveau, et tout se synchronise dès que le Synapse central revient. Seuls la synchronisation entre appareils, le partage et la création d’un compte sur le serveur attendent son retour.
-- Son adresse Internet gratuite change à chaque redémarrage de Synapse : il la **publie tout seul sur ce dépôt GitHub** (branche `synapse-adresse`, fichier `adresse.json`). Les applications la retrouvent toutes seules, **sans se déconnecter**.
-- Sur un autre PC, « Lancer Synapse » se connecte au Synapse central (rien à compiler). Pour faire de ce PC un serveur indépendant : `Lancer Synapse.cmd --serveur` (revenir : `--client`).
-- Pour un Synapse toujours en ligne, même PC éteint : voir [METTRE-EN-LIGNE.txt](METTRE-EN-LIGNE.txt) (adresse fixe, hébergeur, Docker).
+- [`app/`](app) : l’application elle-même (React, three.js), la même pour Windows et Android ;
+- [`desktop/`](desktop) : la version Windows (Electron) et son installateur ;
+- [`android/`](android) : la version Android (une vue web qui contient `app/dist`).
 
-## Les comptes et les admins
+GitHub construit tout seul les deux versions (voir [`.github/workflows/synapse.yml`](.github/workflows/synapse.yml)) : chaque étiquette `v…` (par exemple `v8.0.0`) publie une nouvelle version sur la page [Releases](https://github.com/AwayFN/Synapse/releases), avec `Synapse-Setup.exe` et `Synapse.apk`. À chaque modification, une construction d’essai lance aussi l’application Android sur un téléphone simulé.
 
-- Chacun **crée son compte** en ouvrant l’application (inscriptions ouvertes ; l’admin peut passer « sur invitation » ou « fermées »).
-- Le créateur de Synapse est admin. Dans l’**espace admin**, il voit **tous les comptes**, leurs **appareils** (application Android, application Windows, navigateur), qui est **en ligne** et où, les statistiques, les retours et les erreurs. Il peut **nommer d’autres admins** (mêmes droits, sauf sur son compte).
-- L’espace admin montre des chiffres et des métadonnées, **jamais le contenu des cerveaux**.
+Construire à la main (Node.js 22) : dans `app/`, `npm ci` puis `npm run build` ; dans `desktop/`, `npm ci` puis `npm run dist` (l’installateur arrive dans `desktop/release/`).
 
-## Partager ton cerveau
-
-Bouton **Partager**, en haut à droite : pour chaque personne, **Peut modifier** ou **Peut seulement regarder**, puis envoie le lien. Sur le téléphone, **Envoyer…** ouvre directement WhatsApp, SMS, e-mail… ; **QR** affiche un code à viser. **Une seule personne écrit à la fois dans une même note** : les autres la voient en lecture seule, avec son prénom. Les éléments marqués privés (case dans leur fiche) ne sont jamais montrés.
-
-Tu as reçu un lien ? Ouvre-le (rien à installer, ça s’ouvre dans le navigateur), ou dans l’application : ton prénom → **Rejoindre le cerveau d’un ami** → colle le lien (ou tout le message) : tu le rejoins avec ton compte.
-
-## Tes données
-
-- Sur le Synapse central : `%APPDATA%\Synapse` (un dossier par cerveau, une sauvegarde par jour pendant 14 jours).
-- Sur ton téléphone et tes autres PC : une copie de ton cerveau, pour qu’il marche sans connexion (effacée à « Se déconnecter »).
-- Export à tout moment : `Ctrl+K`, puis « Exporter mes données » (sur téléphone : dans Téléchargements).
-
-## L’application Android (pour le créateur)
-
-Le code est dans [`android/`](android) : l’application contient Synapse lui-même (le dossier `app/dist`, copié dans l’APK). GitHub la construit tout seul : chaque étiquette `v…` (par exemple `v7.0.0`) publie une nouvelle version sur la page [Releases](https://github.com/AwayFN/Synapse/releases), avec le fichier `Synapse.apk`. L’application vérifie une fois par jour s’il existe une version plus récente.
-
-Pour que les mises à jour s’installent par-dessus l’ancienne version, ajoute une fois une clé de signature permanente dans les secrets du dépôt (Settings → Secrets and variables → Actions) : `SYNAPSE_KEYSTORE_BASE64` (fichier `.jks` en base64, alias `synapse`) et `SYNAPSE_KEYSTORE_PASSWORD`. Sans elle, chaque version a sa propre clé : pour mettre à jour, il faut désinstaller puis réinstaller ; **vérifie d’abord que le point à côté de ton prénom est vert** (tout est alors sur le Synapse central), puis reconnecte-toi.
+Pour que les mises à jour Android s’installent par-dessus l’ancienne version (sans désinstaller), ajoute une fois une clé de signature permanente dans les secrets du dépôt (Settings → Secrets and variables → Actions) : `SYNAPSE_KEYSTORE_BASE64` (fichier `.jks` en base64, alias `synapse`) et `SYNAPSE_KEYSTORE_PASSWORD`.
 
 Le mode d’emploi complet est dans [LISEZ-MOI.txt](LISEZ-MOI.txt), et dans l’application (touche `?`).

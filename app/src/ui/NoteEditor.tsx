@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useData } from '../store/data';
 import { neighborsOf } from '../store/graph';
 import { useUI } from '../store/ui';
+import { readKey, writeKey } from '../store/storage';
 import { shortCode } from '../lib/random';
 import { wordCount } from '../lib/text';
 import { fmtDay, fmtStamp, fmtTime } from '../lib/time';
@@ -11,8 +12,7 @@ import { Corners, cvar, Kbd } from './common';
 import { DeleteButton } from './DetailPanel';
 import { EntityChip } from './EntityChip';
 import { LinkPicker } from './LinkPicker';
-import { ProjectSelect, TagEditor, TASK_STATUS_OPTIONS } from './fields';
-import { useEditLock } from '../sync/lock';
+import { DayTimeField, ProjectSelect, TagEditor, TASK_STATUS_OPTIONS } from './fields';
 
 /**
  * L'éditeur en grand, presque tout l'écran (comme le Bloc-notes) : pour une note (son contenu), et aussi pour la
@@ -24,12 +24,8 @@ const SIZE_KEY = 'synapse-taille-texte';
 const DEFAULT_SIZE = 15;
 
 function readSize(): number {
-  try {
-    const n = Number(localStorage.getItem(SIZE_KEY));
-    return SIZES.includes(n) ? n : DEFAULT_SIZE;
-  } catch {
-    return DEFAULT_SIZE;
-  }
+  const n = Number(readKey(SIZE_KEY));
+  return SIZES.includes(n) ? n : DEFAULT_SIZE;
 }
 
 function useTextSize(): [number, (dir: -1 | 1) => void] {
@@ -38,11 +34,7 @@ function useTextSize(): [number, (dir: -1 | 1) => void] {
     setSize((cur) => {
       const i = Math.max(0, Math.min(SIZES.length - 1, SIZES.indexOf(cur) + dir));
       const next = SIZES[i];
-      try {
-        localStorage.setItem(SIZE_KEY, String(next));
-      } catch {
-        /* pas grave */
-      }
+      writeKey(SIZE_KEY, String(next));
       return next;
     });
   };
@@ -59,7 +51,7 @@ const BODY_HINT: Record<EntityType, string> = {
 const INDEPENDENT: Record<'note' | 'task' | 'slot', string> = { note: '— Note indépendante —', task: '— Tâche indépendante —', slot: 'Sans projet' };
 
 /** Liens de l'élément, en une ligne : chaque puce ouvre l'élément lié ; « + Lier à… » relie à n'importe quoi */
-function EditorLinks({ id, readOnly }: { id: string; readOnly: boolean }) {
+function EditorLinks({ id }: { id: string }) {
   const entities = useData((s) => s.entities);
   const links = useData((s) => s.links);
   const unlink = useData((s) => s.unlink);
@@ -72,13 +64,11 @@ function EditorLinks({ id, readOnly }: { id: string; readOnly: boolean }) {
       <span className="xs-label mr-1">Liens</span>
       {neighbors.length === 0 && <span className="text-[12px] text-white/30 mr-1">aucun</span>}
       {neighbors.map((n) => (
-        <EntityChip key={n.entity.id} id={n.entity.id} compact onRemove={readOnly ? undefined : () => unlink(id, n.entity.id)} />
+        <EntityChip key={n.entity.id} id={n.entity.id} compact onRemove={() => unlink(id, n.entity.id)} />
       ))}
-      {!readOnly && (
-        <button className="btn !py-1 !px-2 !text-[9.5px]" onClick={() => setPicking((p) => !p)}>
-          + Lier à…
-        </button>
-      )}
+      <button className="btn !py-1 !px-2 !text-[9.5px]" onClick={() => setPicking((p) => !p)}>
+        + Lier à…
+      </button>
       {picking && (
         <div className="absolute left-0 top-full z-40 w-[440px] max-w-[calc(100vw-48px)]">
           <LinkPicker sourceId={id} onClose={() => setPicking(false)} level={LEVEL.inEditor} />
@@ -123,9 +113,6 @@ function Editor({ e }: { e: Entity }) {
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   const [caret, setCaret] = useState({ line: 1, col: 1 });
   const [size, stepSize] = useTextSize();
-  // partage : une seule personne écrit à la fois dans un élément
-  const lock = useEditLock(e.id);
-  const readOnly = !lock.canWrite;
   const key = bodyKey(e);
   const body = bodyOf(e);
   const tags = tagsOf(e);
@@ -142,7 +129,6 @@ function Editor({ e }: { e: Entity }) {
   // focus : élément vide → titre, sinon fin du texte
   useEffect(() => {
     const t = window.setTimeout(() => {
-      if (readOnly) return;
       if (!e.title && !body) titleRef.current?.focus();
       else {
         const b = bodyRef.current;
@@ -175,12 +161,7 @@ function Editor({ e }: { e: Entity }) {
           <input
             ref={titleRef}
             value={e.title}
-            readOnly={readOnly}
-            onChange={(ev) => {
-              lock.claim();
-              update(e.id, { title: ev.target.value });
-            }}
-            onFocus={lock.claim}
+            onChange={(ev) => update(e.id, { title: ev.target.value })}
             onKeyDown={(ev) => {
               if (ev.key === 'Enter' || ev.key === 'ArrowDown') {
                 ev.preventDefault();
@@ -191,24 +172,16 @@ function Editor({ e }: { e: Entity }) {
             className="flex-1 min-w-0 bg-transparent outline-none text-[18px] max-md:text-[16px] font-semibold tracking-tight text-white placeholder:text-white/25 px-2"
             style={{ textShadow: '0 0 30px rgb(var(--c) / 0.35)' }}
           />
-          {lock.holder && (
-            <span className="hud text-[9.5px] px-2.5 py-1 border border-[#ffb020]/60 text-[#ffb020] flex-none" data-note-locked>
-              ✎ {lock.holder} écrit · lecture seule
-            </span>
-          )}
-          {lock.viewOnly && !lock.holder && <span className="hud text-[9.5px] px-2.5 py-1 border border-white/20 text-white/55 flex-none">Lecture seule</span>}
-          {!readOnly && (
-            <span className="max-md:hidden">
-              <DeleteButton id={e.id} label="Supprimer" />
-            </span>
-          )}
+          <span className="max-md:hidden">
+            <DeleteButton id={e.id} label="Supprimer" />
+          </span>
         </div>
 
-        {/* tags, projet, statut, liens */}
-        <fieldset disabled={readOnly} className="m-0 border-0 min-w-0 flex items-center gap-x-6 gap-y-2 flex-wrap px-4 max-md:px-3 py-2.5 border-b border-white/[0.05] flex-none" onFocus={lock.claim}>
+        {/* tags, projet, jour dans l'agenda, statut, liens */}
+        <div className="flex items-center gap-x-6 gap-y-2 flex-wrap px-4 max-md:px-3 py-2.5 border-b border-white/[0.05] flex-none" data-editor-meta>
           <div className="flex items-center gap-2 min-w-0">
             <span className="xs-label">Tags</span>
-            {readOnly ? <span className="mono text-[11px] text-white/55">{tags.length ? tags.map((t) => `#${t}`).join('  ') : '—'}</span> : <TagEditor id={e.id} tags={tags} />}
+            <TagEditor id={e.id} tags={tags} />
           </div>
           {hasProject(e) && (
             <div className="flex items-center gap-2 min-w-0">
@@ -219,6 +192,14 @@ function Editor({ e }: { e: Entity }) {
             </div>
           )}
           <StatusMini e={e} />
+          {e.type === 'note' && (
+            <div className="flex items-center gap-2 min-w-0" data-editor-agenda>
+              <span className="xs-label">Agenda</span>
+              <div className="w-[250px] max-w-[70vw]">
+                <DayTimeField date={e.date ?? null} time={e.time ?? null} onChange={(date, time) => update(e.id, { date, time })} />
+              </div>
+            </div>
+          )}
           {e.type === 'slot' && (
             <span className="mono text-[10.5px] text-white/50">
               {fmtDay(e.date)} · {fmtTime(e.start)} → {fmtTime(e.end)}
@@ -230,25 +211,22 @@ function Editor({ e }: { e: Entity }) {
               {e.time != null ? ` · ${fmtTime(e.time)}` : ''}
             </span>
           )}
-          <EditorLinks id={e.id} readOnly={readOnly} />
-        </fieldset>
+          <EditorLinks id={e.id} />
+        </div>
 
         {/* le texte, sur tout l'écran */}
         <textarea
           ref={bodyRef}
           value={body}
-          readOnly={readOnly}
           onChange={(ev) => {
-            lock.claim();
             update(e.id, { [key]: ev.target.value } as Partial<Entity>);
             track();
           }}
-          onFocus={lock.claim}
           onSelect={track}
           onKeyUp={track}
           onClick={track}
           onKeyDown={(ev) => {
-            if (ev.key === 'Tab' && !readOnly && !ev.ctrlKey && !ev.altKey) {
+            if (ev.key === 'Tab' && !ev.ctrlKey && !ev.altKey) {
               ev.preventDefault();
               const el = ev.currentTarget;
               const { selectionStart: a, selectionEnd: b } = el;
@@ -260,7 +238,7 @@ function Editor({ e }: { e: Entity }) {
               });
             }
           }}
-          placeholder={readOnly ? '' : BODY_HINT[e.type]}
+          placeholder={BODY_HINT[e.type]}
           spellCheck
           data-editor-body
           className="flex-1 min-h-0 w-full resize-none bg-transparent outline-none px-5 py-4 max-md:px-3.5 max-md:py-3 text-[rgb(233_233_241/0.92)] placeholder:text-white/20 font-sans scroll-thin"
@@ -291,7 +269,7 @@ function Editor({ e }: { e: Entity }) {
           </span>
           <span className="ml-auto flex items-center gap-2">
             <span key={e.updatedAt} className="w-1.5 h-1.5 bg-[#39ff88] shadow-[0_0_8px_#39ff88] anim-fade" />
-            <span className="max-md:hidden">sauvegarde auto · </span>
+            <span className="max-md:hidden">enregistré sur cet appareil · </span>
             {fmtStamp(e.updatedAt)}
           </span>
           <span className="max-lg:hidden">

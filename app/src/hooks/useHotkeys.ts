@@ -1,14 +1,10 @@
 import { useEffect } from 'react';
-import { useUI } from '../store/ui';
+import { networkSettingsVisible, useUI } from '../store/ui';
 import { newNote } from '../lib/actions';
 import { isTyping } from '../scene/FlyControls';
-import { useSession } from '../sync/session';
 
-/** Une fenêtre (compte, admin, partage, retours) est ouverte : Tab ne change pas de vue derrière elle */
-const overlay = () => {
-  const s = useSession.getState();
-  return s.accountOpen || s.adminOpen || s.shareOpen || s.feedbackOpen;
-};
+/** Les réglages du réseau sont ouverts (et visibles) : Tab ne change pas de vue derrière eux */
+const overlay = () => networkSettingsVisible(useUI.getState());
 
 /**
  * Global shortcuts:

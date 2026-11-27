@@ -1,7 +1,0 @@
-{
-  "_aide": "Le Synapse central : toutes les applications (PC Windows, téléphones Android) s'y connectent. Son adresse est publiée automatiquement par le PC du créateur sur ce dépôt GitHub (branche synapse-adresse, fichier adresse.json). Si ton serveur a une adresse fixe (hébergeur, domaine), écris-la dans « adresse ».",
-  "depot": "AwayFN/Synapse",
-  "branche": "synapse-adresse",
-  "fichier": "adresse.json",
-  "adresse": ""
-}

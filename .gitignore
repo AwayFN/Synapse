@@ -1,5 +1,7 @@
 # Composants installés par npm : énormes, et recréés automatiquement si besoin
 app/node_modules/
+# L'application compilée : recréée à chaque construction (GitHub la met dans l'APK et dans l'installateur Windows)
+app/dist/
 # Outils de développement (aperçu local)
 .claude/
 # Fichiers temporaires

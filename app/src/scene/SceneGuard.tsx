@@ -1,9 +1,8 @@
 import { Component, type ReactNode } from 'react';
-import { reportError } from '../sync/errors';
 import { useUI } from '../store/ui';
 import { Corners } from '../ui/common';
 
-/** La 3D a besoin de WebGL 2 (la carte graphique, par le navigateur) */
+/** La 3D a besoin de WebGL 2 (la carte graphique) */
 function webgl2Available(): boolean {
   try {
     const c = document.createElement('canvas');
@@ -24,20 +23,18 @@ function NoScene() {
         <Corners />
         <div className="hud text-[10.5px] text-white/80">La vue 3D ne peut pas s’afficher ici</div>
         <div className="text-[13px] text-white/65 mt-3 leading-relaxed">
-          Le navigateur n’a pas accès à la carte graphique de cet ordinateur. Tout le reste marche : l’
-          <span className="text-white/85">emploi du temps</span>, les <span className="text-white/85">tâches</span>, les notes (Ctrl K pour chercher ou créer), et
-          le partage.
+          Synapse n’a pas accès à la carte graphique de cet appareil. Tout le reste marche : l’<span className="text-white/85">agenda</span>, les{' '}
+          <span className="text-white/85">tâches</span>, les notes (Ctrl K pour chercher ou créer).
         </div>
         <div className="text-[12px] text-white/45 mt-3 leading-relaxed">
-          Pour retrouver la 3D : dans les paramètres du navigateur (Edge ou Chrome), active « Utiliser l’accélération graphique quand elle est disponible », ou
-          mets à jour le pilote de ta carte graphique, puis relance Synapse.
+          Pour retrouver la 3D : mets à jour le pilote de ta carte graphique (sur PC) ou Android System WebView (sur téléphone), puis rouvre Synapse.
         </div>
         <div className="flex gap-2 mt-5 flex-wrap">
           <button className="btn btn-primary" onClick={() => useUI.getState().setView('tasks')}>
             Voir mes tâches
           </button>
           <button className="btn" onClick={() => useUI.getState().setView('agenda')}>
-            Emploi du temps
+            Agenda
           </button>
           <button className="btn btn-ghost" onClick={() => location.reload()}>
             Réessayer
@@ -53,14 +50,6 @@ export class SceneGuard extends Component<{ children: ReactNode }, { failed: boo
 
   static getDerivedStateFromError() {
     return { failed: true };
-  }
-
-  componentDidMount() {
-    if (this.state.failed) reportError(new Error('WebGL 2 indisponible : vue 3D remplacée par un message'), 'vue 3D');
-  }
-
-  componentDidCatch(err: unknown) {
-    reportError(err, 'vue 3D');
   }
 
   render() {

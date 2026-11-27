@@ -27,15 +27,35 @@ export function useAllTags(): [string, number][] {
   );
 }
 
-/** Filtre par tag : les éléments qui ont ce tag (quelle que soit leur sorte) restent allumés, le reste s'estompe */
-export function TagBar() {
+/**
+ * Filtre par tag : les éléments qui ont ce tag (quelle que soit leur sorte) restent allumés, le reste s'estompe.
+ * Sur le PC, sous les vues ; sur le téléphone (variant « scroll »), en haut, sur une ligne qui défile au doigt.
+ */
+export function TagBar({ variant = 'wrap' }: { variant?: 'wrap' | 'scroll' }) {
   const tags = useAllTags();
   const active = useUI((s) => s.activeTags);
   const toggleTag = useUI((s) => s.toggleTag);
   const clearTags = useUI((s) => s.clearTags);
   if (!tags.length) return null;
+  if (variant === 'scroll') {
+    return (
+      <div className="flex gap-1.5 overflow-x-auto px-4 py-1 pointer-events-auto scroll-none" style={{ touchAction: 'pan-x' }} data-ui data-tagbar="scroll">
+        {active.length > 0 && (
+          <button className="chip flex-none !py-1.5 !px-2.5" style={cvar('#ffffff')} onClick={clearTags}>
+            ✕ filtre
+          </button>
+        )}
+        {tags.map(([t, n]) => (
+          <button key={t} className="chip flex-none !py-1.5 !px-2.5" data-on={active.includes(t) ? '1' : '0'} style={cvar(tagColor(t))} onClick={() => toggleTag(t)}>
+            #{t}
+            <span className="opacity-50">{n}</span>
+          </button>
+        ))}
+      </div>
+    );
+  }
   return (
-    <div className="flex flex-wrap justify-center gap-1.5 max-w-[620px] pointer-events-auto" data-ui>
+    <div className="flex flex-wrap justify-center gap-1.5 max-w-[620px] pointer-events-auto" data-ui data-tagbar="wrap">
       {tags.map(([t, n]) => (
         <button key={t} className="chip" data-on={active.includes(t) ? '1' : '0'} style={cvar(tagColor(t))} onClick={() => toggleTag(t)}>
           #{t}

@@ -6,7 +6,7 @@ import { useUI } from '../store/ui';
 import { NEON } from '../lib/color';
 import { excerpt, normalizeTag } from '../lib/text';
 import { crossesMidnight, fmtDateShort, fmtDuration, fmtHM, fmtTime, slotDuration, todayISO } from '../lib/time';
-import type { Entity, Project, Slot, Task, TaskStatus } from '../types';
+import type { Entity, Note, Project, Slot, Task, TaskStatus } from '../types';
 import { bodyOf, TASK_STATUS_LABEL } from '../types';
 import { cvar } from './common';
 import { EntityChip } from './EntityChip';
@@ -61,9 +61,8 @@ export function AutoTextarea({
 /**
  * Le texte long d'un élément (description d'une tâche, d'un projet, d'un créneau ; contenu d'une note) : un aperçu
  * qui ouvre l'éditeur en grand, comme pour les notes, au lieu d'une petite zone où l'on écrit à l'étroit.
- * (Pas un vrai bouton : il reste utilisable en lecture seule, dans un formulaire désactivé.)
  */
-export function BodyPreview({ e, placeholder, readOnly = false }: { e: Entity; placeholder: string; readOnly?: boolean }) {
+export function BodyPreview({ e, placeholder }: { e: Entity; placeholder: string }) {
   const openEditor = useUI((s) => s.openEditor);
   const text = bodyOf(e).trim();
   const open = () => openEditor(e.id, { keepView: true });
@@ -81,8 +80,8 @@ export function BodyPreview({ e, placeholder, readOnly = false }: { e: Entity; p
       }}
       className="w-full text-left text-[13px] leading-relaxed text-white/65 border border-white/[0.08] p-3 cursor-pointer hover:border-[rgb(var(--c)/0.6)] focus:border-[rgb(var(--c)/0.6)] outline-none transition-colors"
     >
-      {text ? <span className="whitespace-pre-line break-words">{excerpt(text, 320)}</span> : <span className="text-white/30">{readOnly ? 'Rien d’écrit pour l’instant.' : placeholder}</span>}
-      <div className="hud text-[9.5px] text-[rgb(var(--c))] mt-2">{readOnly ? 'Lire en grand →' : text ? 'Ouvrir en grand →' : 'Écrire en grand →'}</div>
+      {text ? <span className="whitespace-pre-line break-words">{excerpt(text, 320)}</span> : <span className="text-white/30">{placeholder}</span>}
+      <div className="hud text-[9.5px] text-[rgb(var(--c))] mt-2">{text ? 'Ouvrir en grand →' : 'Écrire en grand →'}</div>
     </div>
   );
 }
@@ -110,8 +109,8 @@ export function ColorSwatches({ value, onChange }: { value: string; onChange: (c
   );
 }
 
-/** Linked entities + "+ Lier à…" (en lecture seule : on peut ouvrir les liens, pas les changer) */
-export function LinksSection({ id, label = 'Liens', readOnly = false, pickerLevel }: { id: string; label?: string; readOnly?: boolean; pickerLevel?: number }) {
+/** Linked entities + "+ Lier à…" */
+export function LinksSection({ id, label = 'Liens', pickerLevel }: { id: string; label?: string; pickerLevel?: number }) {
   const entities = useData((s) => s.entities);
   const links = useData((s) => s.links);
   const unlink = useData((s) => s.unlink);
@@ -122,11 +121,9 @@ export function LinksSection({ id, label = 'Liens', readOnly = false, pickerLeve
     <Section
       label={`${label} · ${neighbors.length}`}
       right={
-        readOnly ? undefined : (
-          <button className="btn !py-1 !px-2 !text-[9.5px]" onClick={() => setPicking((p) => !p)}>
-            + Lier à…
-          </button>
-        )
+        <button className="btn !py-1 !px-2 !text-[9.5px]" onClick={() => setPicking((p) => !p)}>
+          + Lier à…
+        </button>
       }
     >
       <div className="flex flex-wrap gap-1.5">
@@ -136,11 +133,11 @@ export function LinksSection({ id, label = 'Liens', readOnly = false, pickerLeve
             key={n.entity.id}
             id={n.entity.id}
             hint={n.kind === 'parent' ? (n.isParent ? 'projet' : n.entity.type === 'slot' ? 'créneau' : n.entity.type === 'note' ? 'note' : 'tâche') : undefined}
-            onRemove={readOnly ? undefined : () => unlink(id, n.entity.id)}
+            onRemove={() => unlink(id, n.entity.id)}
           />
         ))}
       </div>
-      {picking && !readOnly && <LinkPicker sourceId={id} onClose={() => setPicking(false)} level={pickerLevel} />}
+      {picking && <LinkPicker sourceId={id} onClose={() => setPicking(false)} level={pickerLevel} />}
     </Section>
   );
 }
@@ -163,7 +160,7 @@ export const TASK_STATUS_OPTIONS: { v: TaskStatus; label: string; c: string }[] 
   { v: 'done', label: TASK_STATUS_LABEL.done, c: '#39ff88' },
 ];
 
-function DateField({ value, onChange, allowEmpty = true }: { value: string | null; onChange: (v: string | null) => void; allowEmpty?: boolean }) {
+export function DateField({ value, onChange, allowEmpty = true }: { value: string | null; onChange: (v: string | null) => void; allowEmpty?: boolean }) {
   return (
     <div className="flex gap-1.5">
       <input
@@ -298,17 +295,17 @@ function ProjectNotes({ p }: { p: Project }) {
   );
 }
 
-/** Le temps passé (ou prévu) sur le projet, d'après l'emploi du temps */
+/** Le temps passé (ou prévu) sur le projet, d'après les créneaux de l'agenda */
 function ProjectSlots({ p }: { p: Project }) {
   const entities = useData((s) => s.entities);
   const openEntity = useUI((s) => s.openEntity);
   const slots = projectSlots(entities, p.id);
   const total = slots.reduce((acc, s) => acc + slotDuration(s.start, s.end), 0);
   return (
-    <Section label={`Emploi du temps · ${slots.length ? fmtHM(total) : 'aucun créneau'}`}>
+    <Section label={`Agenda · ${slots.length ? fmtHM(total) : 'aucun créneau'}`}>
       {slots.length === 0 ? (
         <div className="text-[12px] text-white/35 leading-relaxed">
-          Dans l’emploi du temps (touche Tab), crée un créneau et choisis ce projet : le temps s’affiche ici.
+          Dans l’agenda (touche Tab), crée un créneau et choisis ce projet : le temps qui lui est consacré s’affiche ici.
         </div>
       ) : (
         <div className="flex flex-col">
@@ -356,17 +353,47 @@ export function TaskFields({ t }: { t: Task }) {
       <Section label="Projet parent">
         <ProjectSelect value={t.projectId} onChange={(id) => update(t.id, { projectId: id })} empty="— Tâche indépendante —" />
       </Section>
-      <Section label="Date & heure (optionnelles)">
-        <div className="flex gap-1.5">
-          <div className="flex-1">
-            <DateField value={t.date} onChange={(v) => update(t.id, { date: v })} />
-          </div>
-          <TimeInput value={t.time} allowEmpty placeholder="--:--" className="!w-[86px]" onChange={(m) => update(t.id, { time: m, date: t.date ?? (m != null ? todayISO() : null) })} />
-        </div>
+      <Section label="Dans l’agenda · date & heure (optionnelles)">
+        <DayTimeField date={t.date} time={t.time} onChange={(date, time) => update(t.id, { date, time })} />
       </Section>
       <Section label="Description">
         <BodyPreview e={t} placeholder="Détails, contexte, étapes…" />
       </Section>
+    </>
+  );
+}
+
+/**
+ * Le jour (et l'heure, s'il y en a une) d'une tâche ou d'une note : sa place dans l'agenda. Une heure sans jour
+ * prend aujourd'hui ; effacer le jour efface aussi l'heure.
+ */
+export function DayTimeField({ date, time, onChange }: { date: string | null; time: number | null; onChange: (date: string | null, time: number | null) => void }) {
+  return (
+    <div className="flex gap-1.5" data-day-time>
+      <div className="flex-1 min-w-0">
+        <DateField value={date} onChange={(v) => onChange(v, v ? time : null)} />
+      </div>
+      <TimeInput value={time} allowEmpty placeholder="--:--" className="!w-[86px]" onChange={(m) => onChange(date ?? (m != null ? todayISO() : null), m)} />
+    </div>
+  );
+}
+
+/** Une note : son projet (ou indépendante), sa place dans l'agenda (V8), son contenu (écrit en grand) */
+export function NoteFields({ n, compact }: { n: Note; compact?: boolean }) {
+  const update = useData((s) => s.update);
+  return (
+    <>
+      <Section label="Projet">
+        <ProjectSelect value={n.projectId ?? null} onChange={(id) => update(n.id, { projectId: id })} empty="— Note indépendante —" />
+      </Section>
+      <Section label="Dans l’agenda · jour & heure (optionnels)">
+        <DayTimeField date={n.date ?? null} time={n.time ?? null} onChange={(date, time) => update(n.id, { date, time })} />
+      </Section>
+      {!compact && (
+        <Section label="Contenu">
+          <BodyPreview e={n} placeholder="Note vide : écris-la en grand." />
+        </Section>
+      )}
     </>
   );
 }
@@ -402,34 +429,63 @@ export function SlotFields({ s, compact }: { s: Slot; compact?: boolean }) {
   );
 }
 
-/** Les tags d'un élément, quel qu'il soit (projet, tâche, note, créneau) */
+/** Ce qui sépare deux tags pendant la saisie : espace, virgule, point-virgule, retour à la ligne */
+const TAG_SEP = /[\s,;]+/;
+
+/**
+ * Les tags d'un élément, quel qu'il soit (projet, tâche, note, créneau). Les mêmes sur le PC et sur le téléphone :
+ * Entrée, espace ou virgule valident un tag (sur Android, le clavier ne signale pas toujours ces touches : le texte
+ * tapé est donc aussi découpé à chaque changement) ; les tags déjà utilisés sont proposés.
+ */
 export function TagEditor({ id, tags }: { id: string; tags: string[] }) {
   const update = useData((s) => s.update);
   const all = useAllTags();
   const [text, setText] = useState('');
   const [focus, setFocus] = useState(false);
-  const add = (raw: string) => {
-    const t = normalizeTag(raw);
-    if (!t || tags.includes(t)) return;
-    update(id, { tags: [...tags, t] });
+  const addMany = (raws: string[]) => {
+    const next = [...tags];
+    for (const raw of raws) {
+      const t = normalizeTag(raw);
+      if (t && !next.includes(t)) next.push(t);
+    }
+    if (next.length !== tags.length) update(id, { tags: next });
   };
+  const add = (raw: string) => addMany([raw]);
   const suggestions = all
     .map(([t]) => t)
     .filter((t) => !tags.includes(t) && (!text || t.startsWith(normalizeTag(text))))
     .slice(0, 8);
   return (
-    <div className="flex flex-wrap items-center gap-1.5 relative">
+    <div className="flex flex-wrap items-center gap-1.5 relative" data-tag-editor>
       {tags.map((t) => (
         <span key={t} className="chip" style={cvar(tagColor(t))}>
           #{t}
-          <button className="opacity-50 hover:opacity-100" title={`Retirer #${t}`} onClick={() => update(id, { tags: tags.filter((x) => x !== t) })}>
+          <button
+            className="opacity-50 hover:opacity-100 px-0.5 max-md:px-1.5 max-md:-my-1 max-md:py-1 max-md:text-[14px] leading-none"
+            title={`Retirer #${t}`}
+            aria-label={`Retirer le tag ${t}`}
+            onClick={() => update(id, { tags: tags.filter((x) => x !== t) })}
+          >
             ×
           </button>
         </span>
       ))}
       <input
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        enterKeyHint="done"
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck={false}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (TAG_SEP.test(v)) {
+            // « idee urgent » ou « idee, » : ce qui est complet devient tag, le reste continue d'être tapé
+            const parts = v.split(TAG_SEP);
+            const rest = /[\s,;]$/.test(v) ? '' : parts.pop() ?? '';
+            addMany(parts.filter(Boolean));
+            setText(rest);
+          } else setText(v);
+        }}
         onFocus={() => setFocus(true)}
         onBlur={() => setTimeout(() => setFocus(false), 150)}
         onKeyDown={(e) => {
@@ -437,6 +493,8 @@ export function TagEditor({ id, tags }: { id: string; tags: string[] }) {
             e.preventDefault();
             add(text);
             setText('');
+          } else if (e.key === 'Enter') {
+            e.preventDefault();
           } else if (e.key === 'Backspace' && !text && tags.length) {
             update(id, { tags: tags.slice(0, -1) });
           }
@@ -449,14 +507,15 @@ export function TagEditor({ id, tags }: { id: string; tags: string[] }) {
           }
         }}
         placeholder={tags.length ? '+ tag' : '+ ajouter un tag (#idee, #urgent…)'}
-        className="bg-transparent outline-none mono text-[11px] text-white/80 placeholder:text-white/25 min-w-[120px] py-1"
+        className="bg-transparent outline-none mono text-[11px] max-md:text-[13px] text-white/80 placeholder:text-white/25 min-w-[120px] py-1 max-md:py-1.5"
+        data-tag-input
       />
       {focus && suggestions.length > 0 && (
-        <div className="absolute left-0 top-full mt-1 glass z-30 flex flex-wrap gap-1 p-2 max-w-[420px] anim-pop">
+        <div className="absolute left-0 top-full mt-1 glass z-30 flex flex-wrap gap-1 max-md:gap-1.5 p-2 max-w-[420px] anim-pop" data-tag-suggestions>
           {suggestions.map((t) => (
             <button
               key={t}
-              className="chip"
+              className="chip max-md:!py-1.5 max-md:!px-2.5"
               style={cvar(tagColor(t))}
               onMouseDown={(e) => {
                 e.preventDefault();

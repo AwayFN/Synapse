@@ -13,8 +13,7 @@
 
 :root {
   --text: 233 233 241;
-  /* accent des écrans de compte et de partage (le cyan de la première version), alerte, fond */
-  --pearl: 0 229 255;
+  /* alerte, fond */
   --alert: 255 77 109;
   --ink: 0 0 0;
   color-scheme: dark;
@@ -62,6 +61,14 @@ button {
 .scroll-thin {
   scrollbar-width: thin;
   scrollbar-color: rgb(255 255 255 / 0.14) transparent;
+}
+/* une ligne qui défile au doigt, sans barre de défilement (les tags en haut du réseau, sur téléphone) */
+.scroll-none {
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.scroll-none::-webkit-scrollbar {
+  display: none;
 }
 
 /* ───────────────────────── floating labels (HUD) */
@@ -132,6 +139,13 @@ button {
   color: #39ff88;
   text-shadow: 0 0 10px #39ff88;
 }
+/* V8 : un neurone posé à la main (il reste là) — un petit losange discret après son nom */
+.lbl-pin {
+  font-size: 7px;
+  margin-left: 1px;
+  color: rgb(var(--c) / 0.75);
+  text-shadow: 0 0 6px rgb(var(--c) / 0.8);
+}
 .lbl-sub {
   font-size: 9px;
   letter-spacing: 0.12em;
@@ -192,34 +206,6 @@ button {
   text-transform: uppercase;
   color: rgb(var(--c) / 0.85);
   border-top: 1px solid rgb(255 255 255 / 0.06);
-}
-
-/* présence : « LÉA » sous le neurone qu'elle regarde */
-.ptag {
-  position: absolute;
-  left: 0;
-  top: 0;
-  visibility: hidden;
-  will-change: transform;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-family: var(--font-mono);
-  font-size: 8.5px;
-  letter-spacing: 0.16em;
-  color: #39ff88;
-  padding: 1px 6px 1px 4px;
-  border: 1px solid rgb(57 255 136 / 0.45);
-  background: rgb(0 0 0 / 0.6);
-  white-space: nowrap;
-  pointer-events: none;
-}
-.ptag i {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: #39ff88;
-  box-shadow: 0 0 6px #39ff88;
 }
 
 /* targeting reticle */
@@ -457,32 +443,51 @@ button {
     background: rgb(var(--c));
     box-shadow: 0 0 8px rgb(var(--c) / 0.9);
   }
-  /* interrupteur d'accès (Wi-Fi, Internet) */
-  .facet {
+  /* curseur des réglages du réseau (distance entre les neurones) */
+  .range {
     --c: 0 229 255;
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    font-family: var(--font-mono);
-    font-size: 9.5px;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    padding: 5px 9px;
-    border: 1px dashed rgb(255 255 255 / 0.16);
-    color: rgb(var(--text) / 0.5);
-    border-radius: 2px;
-    transition: all 0.15s;
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 22px;
+    background: transparent;
+    cursor: pointer;
+    touch-action: pan-y;
   }
-  .facet:hover {
-    color: #fff;
-    border-color: rgb(var(--c) / 0.6);
+  .range::-webkit-slider-runnable-track {
+    height: 2px;
+    background: linear-gradient(90deg, rgb(var(--c) / 0.85) var(--fill, 50%), rgb(255 255 255 / 0.14) var(--fill, 50%));
   }
-  .facet[data-on='1'] {
-    border-style: solid;
-    border-color: rgb(var(--c) / 0.6);
-    color: rgb(var(--c));
-    background: rgb(var(--c) / 0.08);
-    box-shadow: 0 0 12px rgb(var(--c) / 0.2);
+  .range::-moz-range-track {
+    height: 2px;
+    background: rgb(255 255 255 / 0.14);
+  }
+  .range::-moz-range-progress {
+    height: 2px;
+    background: rgb(var(--c) / 0.85);
+  }
+  .range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    margin-top: -7px;
+    transform: rotate(45deg);
+    background: #000;
+    border: 1.5px solid rgb(var(--c));
+    box-shadow: 0 0 10px rgb(var(--c) / 0.7);
+  }
+  .range::-moz-range-thumb {
+    width: 13px;
+    height: 13px;
+    border-radius: 0;
+    transform: rotate(45deg);
+    background: #000;
+    border: 1.5px solid rgb(var(--c));
+    box-shadow: 0 0 10px rgb(var(--c) / 0.7);
+  }
+  .range:focus-visible {
+    outline: 1px solid rgb(var(--c) / 0.6);
+    outline-offset: 2px;
   }
 }
 

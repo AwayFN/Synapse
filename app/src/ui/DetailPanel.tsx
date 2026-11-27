@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useData } from '../store/data';
 import { removeWithUndo, useUI } from '../store/ui';
+import { useNetwork } from '../store/network';
 import { shortCode } from '../lib/random';
 import { fmtStamp } from '../lib/time';
 import { tagsOf, TYPE_LABEL, type Entity } from '../types';
 import { Corners, cvar, Kbd } from './common';
-import { BodyPreview, ColorSwatches, LinksSection, ProjectFields, ProjectSelect, Section, SlotFields, TagEditor, TaskFields } from './fields';
-import { useEditLock } from '../sync/lock';
-import { useSession } from '../sync/session';
+import { ColorSwatches, LinksSection, NoteFields, ProjectFields, Section, SlotFields, TagEditor, TaskFields } from './fields';
 
 export function DeleteButton({ id, label = 'Supprimer' }: { id: string; label?: string }) {
   const [armed, setArmed] = useState(false);
@@ -26,14 +25,34 @@ export function DeleteButton({ id, label = 'Supprimer' }: { id: string; label?: 
   );
 }
 
+/** La place du neurone : posé à la main (il reste là), ou placé automatiquement */
+export function PlacementSection({ id }: { id: string }) {
+  const pinned = useNetwork((s) => !!s.pinned[id]);
+  const unpin = useNetwork((s) => s.unpin);
+  return (
+    <Section label="Place dans le réseau">
+      {pinned ? (
+        <div className="flex items-center justify-between gap-3 flex-wrap" data-placement="pinned">
+          <span className="text-[12px] text-white/60">
+            <span className="text-[rgb(var(--c))]">◆</span> Posé à la main : il reste exactement là.
+          </span>
+          <button className="btn !py-1 !px-2 !text-[9.5px]" onClick={() => unpin(id)} title="Le neurone reprend sa place automatique">
+            Libérer
+          </button>
+        </div>
+      ) : (
+        <div className="text-[12px] text-white/40 leading-relaxed" data-placement="auto">
+          Placé automatiquement. Glisse le neurone (au doigt : appui long, puis glisse) pour le poser où tu veux.
+        </div>
+      )}
+    </Section>
+  );
+}
+
 function Body({ e }: { e: Entity }) {
   const update = useData((s) => s.update);
   const closePanel = useUI((s) => s.closePanel);
   const setFocus = useUI((s) => s.setFocus);
-  // partage : une seule personne modifie un élément à la fois ; « peut regarder » ne modifie rien
-  const lock = useEditLock(e.id);
-  const ro = !lock.canWrite;
-  const owner = useSession((s) => s.mode === 'local' || s.role === 'owner');
 
   return (
     <aside
@@ -48,8 +67,6 @@ function Body({ e }: { e: Entity }) {
           {TYPE_LABEL[e.type]} · {shortCode(e.id)}
         </span>
         {e.seed && <span className="hud text-[8.5px] text-white/30 border border-white/10 px-1.5 py-px">exemple</span>}
-        {lock.holder && <span className="hud text-[8.5px] text-[#ffb020] border border-[#ffb020]/50 px-1.5 py-px">✎ {lock.holder} modifie</span>}
-        {lock.viewOnly && <span className="hud text-[8.5px] text-white/50 border border-white/20 px-1.5 py-px">lecture seule</span>}
         <div className="ml-auto flex items-center gap-1">
           <button className="btn btn-ghost !px-2" title="Centrer la caméra (F)" onClick={() => setFocus(e.id)}>
             ◎
@@ -60,51 +77,30 @@ function Body({ e }: { e: Entity }) {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto scroll-thin px-5 pb-5" onFocus={lock.claim} onInput={lock.claim} onChange={lock.claim}>
+      <div className="flex-1 overflow-y-auto scroll-thin px-5 pb-5">
         <input
           value={e.title}
-          readOnly={ro}
           onChange={(ev) => update(e.id, { title: ev.target.value })}
           placeholder="Sans titre"
           className="w-full bg-transparent outline-none text-[23px] font-semibold tracking-tight text-white placeholder:text-white/25 mt-2 py-1 border-b border-transparent focus:border-[rgb(var(--c)/0.5)] transition-colors"
           style={{ textShadow: '0 0 24px rgb(var(--c) / 0.35)' }}
         />
 
-        <fieldset disabled={ro} className="m-0 p-0 border-0 min-w-0">
-          {e.type === 'project' && <ProjectFields p={e} />}
-          {e.type === 'task' && <TaskFields t={e} />}
-          {e.type === 'slot' && <SlotFields s={e} />}
-          {e.type === 'note' && (
-            <>
-              <Section label="Projet">
-                <ProjectSelect value={e.projectId ?? null} onChange={(id) => update(e.id, { projectId: id })} empty="— Note indépendante —" />
-              </Section>
-              <Section label="Contenu">
-                <BodyPreview e={e} placeholder="Note vide : écris-la en grand." readOnly={ro} />
-              </Section>
-            </>
-          )}
-          {/* des tags sur tout : projets, tâches, notes, créneaux */}
-          <Section label="Tags">
-            {ro ? <span className="mono text-[11px] text-white/55">{tagsOf(e).length ? tagsOf(e).map((t) => `#${t}`).join('  ') : '—'}</span> : <TagEditor id={e.id} tags={tagsOf(e)} />}
-          </Section>
-        </fieldset>
+        {e.type === 'project' && <ProjectFields p={e} />}
+        {e.type === 'task' && <TaskFields t={e} />}
+        {e.type === 'slot' && <SlotFields s={e} />}
+        {e.type === 'note' && <NoteFields n={e} />}
+        {/* des tags sur tout : projets, tâches, notes, créneaux */}
+        <Section label="Tags">
+          <TagEditor id={e.id} tags={tagsOf(e)} />
+        </Section>
 
-        <LinksSection id={e.id} readOnly={ro} />
+        <LinksSection id={e.id} />
 
-        <fieldset disabled={ro} className="m-0 p-0 border-0 min-w-0">
-          <Section label="Couleur de la constellation">
-            <ColorSwatches value={e.color} onChange={(c) => update(e.id, { color: c })} />
-          </Section>
-          {owner && (
-            <Section label="Partage">
-              <label className="flex items-start gap-2 text-[12px] text-white/60 cursor-pointer">
-                <input type="checkbox" className="mt-[3px]" checked={!!e.private} onChange={(ev) => update(e.id, { private: ev.target.checked || undefined })} />
-                <span>Privé : jamais montré aux personnes que tu invites</span>
-              </label>
-            </Section>
-          )}
-        </fieldset>
+        <Section label="Couleur de la constellation">
+          <ColorSwatches value={e.color} onChange={(c) => update(e.id, { color: c })} />
+        </Section>
+        <PlacementSection id={e.id} />
 
         <div className="mt-7 pt-4 border-t border-white/[0.07] flex items-center justify-between gap-3">
           <div className="mono text-[9.5px] tracking-[0.1em] text-white/30 leading-relaxed">
@@ -112,10 +108,10 @@ function Body({ e }: { e: Entity }) {
             <br />
             MODIFIÉ {fmtStamp(e.updatedAt)}
           </div>
-          {!ro && <DeleteButton id={e.id} />}
+          <DeleteButton id={e.id} />
         </div>
       </div>
-      <div className="px-5 py-2.5 border-t border-white/[0.06] hud text-[9px] text-white/30 flex gap-3">
+      <div className="px-5 py-2.5 border-t border-white/[0.06] hud text-[9px] text-white/30 flex gap-3 max-md:hidden">
         <span>
           <Kbd>Échap</Kbd> fermer
         </span>

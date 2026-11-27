@@ -18,5 +18,9 @@ export const labelEls = new Map<string, HTMLElement>();
 export const reticle: { el: HTMLElement | null } = { el: null };
 /** Constellation hovered through its DOM label (takes precedence over 3D picking) */
 export const labelHover: { id: string | null } = { id: null };
-/** Étiquettes de présence (« LÉA ») : qui regarde quel neurone, placées par <PresenceProjector/> */
-export const presenceEls = new Map<string, { el: HTMLElement; focus: string | null; slot: number }>();
+/**
+ * Un neurone qu'on déplace à la main (souris : glisser ; doigt : appui long puis glisser) : son id, pour que la scène
+ * (et son étiquette) le montrent « pris en main » ; endedAt : le moment où on l'a lâché (le clic qui suit n'ouvre rien).
+ * Écrit par <FlyControls/>.
+ */
+export const grab: { id: string | null; endedAt: number } = { id: null, endedAt: 0 };

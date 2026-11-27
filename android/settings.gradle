@@ -1,4 +1,4 @@
-// Synapse pour Android : Synapse lui-même, dans le téléphone (il marche sans serveur et se synchronise avec le Synapse central). Voir README.md.
+// Synapse pour Android : Synapse lui-même, dans le téléphone, 100 % local (sans Internet, sans compte). Voir README.md.
 pluginManagement {
     repositories {
         google()

@@ -48,22 +48,6 @@ export interface DataState {
 
 const now = () => Date.now();
 
-/**
- * Invité « peut regarder » : rien ne se modifie chez lui (et on le lui dit). Le serveur refuse de toute façon
- * ses modifications ; ici on évite qu'il croie avoir changé quelque chose.
- */
-let readOnly = false;
-let onDenied: (() => void) | null = null;
-export function setDataReadOnly(v: boolean, denied?: () => void) {
-  readOnly = v;
-  if (denied) onDenied = denied;
-}
-const blocked = () => {
-  if (!readOnly) return false;
-  onDenied?.();
-  return true;
-};
-
 function nextOrder(entities: Record<string, Entity>, status: TaskStatus): number {
   let max = 0;
   for (const e of Object.values(entities)) if (e.type === 'task' && e.status === status) max = Math.max(max, e.order);
@@ -72,14 +56,26 @@ function nextOrder(entities: Record<string, Entity>, status: TaskStatus): number
 
 const TYPE_OFFSET: Record<EntityType, number> = { project: 0, task: 1, note: 2, slot: 4 };
 
+/** Ce que les versions en ligne (V5 à V7) ajoutaient aux éléments, et qui n'a plus de sens : tout est à toi, ici */
+const LEGACY_KEYS = ['private', 'createdBy', 'updatedBy'] as const;
+
 /**
- * Un élément avec tous ses champs V6 : des tags (sur tout), et un projet pour les notes (null : indépendante).
- * Les éléments d'avant (navigateur, export, ancien serveur) n'en avaient pas forcément.
+ * Un élément avec tous ses champs : des tags (sur tout), un projet pour les notes (null : indépendante), et (V8) un jour
+ * et une heure pour les notes (leur place dans l'agenda). Les éléments d'avant (export, ancienne version) n'en avaient
+ * pas forcément ; ce qui venait du partage disparaît.
  */
 export function withDefaults(e: Entity): Entity {
   let x = e;
   if (!Array.isArray(x.tags)) x = { ...x, tags: [] } as Entity;
-  if (x.type === 'note' && x.projectId === undefined) x = { ...x, projectId: null };
+  if (x.type === 'note') {
+    if (x.projectId === undefined) x = { ...x, projectId: null };
+    if (x.date === undefined || x.time === undefined) x = { ...x, date: x.date ?? null, time: x.time ?? null } as Entity;
+  }
+  if (LEGACY_KEYS.some((k) => k in x)) {
+    const copy = { ...x } as Record<string, unknown>;
+    for (const k of LEGACY_KEYS) delete copy[k];
+    x = copy as unknown as Entity;
+  }
   return x;
 }
 
@@ -110,13 +106,11 @@ export const useData = create<DataState>()(
   persist(
     (set, get) => {
       const log = (text: string, color: string, entityId?: string) => {
-        if (readOnly) return;
         const item: Activity = { id: uid(), at: now(), text, color, entityId };
         set((s) => ({ activity: [item, ...s.activity].slice(0, 60) }));
       };
 
       function insert<T extends Entity>(entity: T, opts?: CreateOpts): T {
-        if (blocked()) return entity;
         const linkTo = (opts?.linkTo ?? []).filter((id) => id !== entity.id);
         set((s) => {
           const links = [...s.links];
@@ -200,6 +194,8 @@ export const useData = create<DataState>()(
               content: '',
               tags: [],
               projectId: null,
+              date: null,
+              time: null,
               ...input,
             } as Note,
             opts,
@@ -226,7 +222,7 @@ export const useData = create<DataState>()(
 
         update: (id, patch) => {
           const e = get().entities[id];
-          if (!e || blocked()) return;
+          if (!e) return;
           if (e.type === 'task' && 'status' in patch && patch.status && patch.status !== e.status) {
             const { status, ...rest } = patch as Partial<Task>;
             if (Object.keys(rest).length) get().update(id, rest as Partial<Entity>);
@@ -260,7 +256,6 @@ export const useData = create<DataState>()(
         },
 
         setTaskStatus: (id, status) => {
-          if (blocked()) return;
           const t = get().entities[id];
           if (!t || t.type !== 'task' || t.status === status) return;
           const order = nextOrder(get().entities, status);
@@ -280,7 +275,6 @@ export const useData = create<DataState>()(
         },
 
         moveTask: (id, status, beforeId) => {
-          if (blocked()) return;
           const t = get().entities[id];
           if (!t || t.type !== 'task') return;
           const col = Object.values(get().entities)
@@ -316,7 +310,6 @@ export const useData = create<DataState>()(
         },
 
         remove: (id, opts) => {
-          if (blocked()) return null;
           const s = get();
           const e = s.entities[id];
           if (!e) return null;
@@ -340,7 +333,6 @@ export const useData = create<DataState>()(
         },
 
         restore: (snap) => {
-          if (blocked()) return;
           set((s) => {
             const entities = { ...s.entities, [snap.entity.id]: snap.entity };
             for (const cid of snap.childTaskIds) {
@@ -358,7 +350,6 @@ export const useData = create<DataState>()(
         },
 
         link: (a, b) => {
-          if (blocked()) return false;
           const s = get();
           const ea = s.entities[a];
           const eb = s.entities[b];
@@ -373,7 +364,6 @@ export const useData = create<DataState>()(
         },
 
         unlink: (a, b) => {
-          if (blocked()) return;
           const s = get();
           const ea = s.entities[a];
           const eb = s.entities[b];
@@ -387,7 +377,6 @@ export const useData = create<DataState>()(
         },
 
         clearSeed: () => {
-          if (blocked()) return 0;
           const s = get();
           const seedIds = new Set(Object.values(s.entities).filter((e) => e.seed).map((e) => e.id));
           if (!seedIds.size) return 0;
@@ -403,7 +392,6 @@ export const useData = create<DataState>()(
         },
 
         replaceAll: (data) => {
-          if (blocked()) return;
           set({ entities: normalizeEntities(data.entities), links: data.links });
           log(`↓ IMPORT  ${Object.keys(data.entities).length} ENTITÉS`, '#00e5ff');
         },
@@ -412,7 +400,8 @@ export const useData = create<DataState>()(
     {
       name: 'synapse-data',
       // 2 : des tags sur tout, et un projet (ou rien) pour les notes
-      version: 2,
+      // 3 (V8, 100 % local) : un jour et une heure pour les notes (l'agenda), plus rien du partage
+      version: 3,
       storage: createJSONStorage(() => debouncedStorage),
       partialize: (s) => ({ entities: s.entities, links: s.links, activity: s.activity }),
       migrate: (persisted) => {
