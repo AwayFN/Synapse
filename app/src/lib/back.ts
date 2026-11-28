@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { networkSettingsVisible, useUI } from '../store/ui';
+import { networkSettingsVisible, panelVisible, useUI } from '../store/ui';
 
 /**
  * « Retour » : la touche Échap (ordinateur) et le bouton retour (téléphone Android) ferment ce qui est ouvert,
@@ -17,6 +17,10 @@ export const LEVEL = {
   /** dans l'éditeur en grand (lier à…) */
   inEditor: 55,
   editor: 50,
+  /** dans la fiche ouverte par-dessus une vue (lier à…) */
+  inPanelInView: 46,
+  /** la fiche, ouverte par-dessus une vue (tâches, notes, agenda) */
+  panelInView: 44,
   /** dans une vue : l'élément ouvert à côté de la semaine (agenda) */
   inView: 40,
   view: 30,
@@ -69,7 +73,9 @@ export function goBack(): boolean {
   add(networkSettingsVisible(ui), LEVEL.dialog, () => ui.setNetworkOpen(false));
   add(!!ui.editorId, LEVEL.editor, () => ui.closeEditor());
   add(ui.view !== 'network', LEVEL.view, () => ui.setView('network'));
-  add(!!ui.selectedId && ui.view === 'network', LEVEL.panel, () => ui.closePanel());
+  // la fiche : sur le réseau, sous les vues ; ouverte depuis une vue (V8.1), par-dessus elle (et par-dessus l'élément
+  // ouvert dans l'agenda, d'où on a pu l'ouvrir)
+  add(panelVisible(ui), ui.view === 'network' ? LEVEL.panel : LEVEL.panelInView, () => ui.closePanel());
   add(typing(), 5, () => {});
   add(!!ui.focusId, 3, () => ui.setFocus(null));
   add(ui.activeTags.length > 0, 2, () => ui.clearTags());

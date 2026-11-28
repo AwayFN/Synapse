@@ -101,9 +101,15 @@ export class PulseSystem {
     }
   }
 
-  /** curves: 9 floats per edge (A, control, B) */
-  update(dt: number, curves: Float32Array, edgeCount: number) {
+  /**
+   * curves: 9 floats per edge (A, control, B), already relative to the floating origin `o` (the camera);
+   * sparks live in world space and are written relative to `o` too (no precision loss far from the centre)
+   */
+  update(dt: number, curves: Float32Array, edgeCount: number, origin: { x: number; y: number; z: number }) {
     const { pos, col, size, int } = this;
+    const ox = origin.x;
+    const oy = origin.y;
+    const oz = origin.z;
     let active = 0;
     for (let i = 0; i < MAX; i++) {
       const base = i * TRAIL;
@@ -170,9 +176,9 @@ export class PulseSystem {
         for (let j = 0; j < TRAIL; j++) {
           const o = base + j;
           // short streak behind the spark
-          pos[o * 3] = this.sp[i * 3] - this.sv[i * 3] * j * 0.012;
-          pos[o * 3 + 1] = this.sp[i * 3 + 1] - this.sv[i * 3 + 1] * j * 0.012;
-          pos[o * 3 + 2] = this.sp[i * 3 + 2] - this.sv[i * 3 + 2] * j * 0.012;
+          pos[o * 3] = this.sp[i * 3] - this.sv[i * 3] * j * 0.012 - ox;
+          pos[o * 3 + 1] = this.sp[i * 3 + 1] - this.sv[i * 3 + 1] * j * 0.012 - oy;
+          pos[o * 3 + 2] = this.sp[i * 3 + 2] - this.sv[i * 3 + 2] * j * 0.012 - oz;
           col[o * 3] = this.rgb[i * 3] * 0.75 + 0.25;
           col[o * 3 + 1] = this.rgb[i * 3 + 1] * 0.75 + 0.25;
           col[o * 3 + 2] = this.rgb[i * 3 + 2] * 0.75 + 0.25;

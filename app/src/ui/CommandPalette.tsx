@@ -221,7 +221,10 @@ function Palette() {
   return (
     <div className="fixed inset-0 z-50" data-ui>
       <div className="absolute inset-0 bg-black/45 backdrop-blur-[3px] anim-fade" onClick={close} />
-      <div className="absolute left-1/2 -translate-x-1/2 top-[14vh] w-[min(680px,calc(100vw-32px))] glass neon anim-pop" style={cvar(accent)}>
+      <div
+        className="absolute left-1/2 -translate-x-1/2 top-[14vh] max-md:top-[calc(10px+env(safe-area-inset-top))] w-[min(680px,calc(100vw-32px))] max-md:w-[calc(100vw-16px)] glass neon anim-pop"
+        style={cvar(accent)}
+      >
         <Corners />
         <div className="flex items-center gap-3 px-4 border-b border-white/[0.07]">
           <span className="mono text-[rgb(var(--c))] text-lg leading-none" style={{ textShadow: '0 0 10px rgb(var(--c))' }}>
@@ -252,15 +255,23 @@ function Palette() {
             }}
             placeholder="note, tâche, projet, créneau… ou chercher"
             spellCheck={false}
-            className="flex-1 bg-transparent outline-none py-4 text-[16px] text-white placeholder:text-white/30"
+            enterKeyHint="go"
+            autoCapitalize="sentences"
+            className="flex-1 min-w-0 bg-transparent outline-none py-4 text-[16px] text-white placeholder:text-white/30"
           />
-          <Kbd>Échap</Kbd>
+          <span className="max-md:hidden">
+            <Kbd>Échap</Kbd>
+          </span>
+          <button className="md:hidden btn btn-ghost !px-3 !py-2" onClick={close} aria-label="Fermer">
+            ✕
+          </button>
         </div>
 
-        <div ref={listRef} className="max-h-[52vh] overflow-y-auto scroll-thin py-1.5">
+        <div ref={listRef} className="max-h-[52vh] max-md:max-h-[calc(100dvh-200px)] overflow-y-auto overscroll-contain scroll-thin py-1.5">
           {rows.map((row, i) => {
             const on = i === active;
-            const base = `w-full text-left px-4 flex items-center gap-3 transition-colors ${on ? 'bg-white/[0.06]' : ''}`;
+            // sur téléphone, des lignes plus hautes (pour le doigt)
+            const base = `w-full text-left px-4 flex items-center gap-3 transition-colors max-md:min-h-[46px] ${on ? 'bg-white/[0.06]' : ''}`;
             if (row.kind === 'create') {
               const c = TYPE_ACCENT[row.type];
               return (
@@ -273,7 +284,7 @@ function Palette() {
                     </div>
                     <Preview p={parsed} />
                   </div>
-                  <div className="flex flex-col items-end gap-1 mono text-[9px] text-white/35">
+                  <div className="flex flex-col items-end gap-1 mono text-[9px] text-white/35 max-md:hidden">
                     <span>ENTRÉE créer</span>
                     <span>CTRL+ENTRÉE ouvrir</span>
                   </div>
@@ -286,7 +297,7 @@ function Palette() {
                   <span className="dot" />
                   <span className="hud text-[10.5px] text-[rgb(var(--c))] w-[70px]">{row.word}</span>
                   <span className="mono text-[11.5px] text-white/45 truncate">{row.example}</span>
-                  {on && <span className="ml-auto mono text-[9px] text-white/35">TAB</span>}
+                  {on && <span className="ml-auto mono text-[9px] text-white/35 max-md:hidden">TAB</span>}
                 </button>
               );
             }
@@ -297,7 +308,7 @@ function Palette() {
                   <span className="dot" />
                   <span className="mono text-[8.5px] tracking-[0.14em] text-[rgb(var(--c))] w-9">{TYPE_TAG[e.type]}</span>
                   <span className="text-[13.5px] text-white/85 truncate">{displayTitle(e)}</span>
-                  {on && <span className="ml-auto mono text-[9px] text-white/35 flex-none">ENTRÉE ◎ voler vers</span>}
+                  {on && <span className="ml-auto mono text-[9px] text-white/35 flex-none max-md:hidden">ENTRÉE ◎ voler vers</span>}
                 </button>
               );
             }
@@ -305,7 +316,7 @@ function Palette() {
               <button key={row.id} data-i={i} onMouseEnter={() => setActive(i)} onClick={() => run(row, false)} className={`${base} py-2`}>
                 <span className="mono text-white/40 w-[7px] text-center">›</span>
                 <span className={`text-[13px] ${row.id === 'clearseed' && armedClear ? 'text-[#ff4d6d]' : 'text-white/75'}`}>{row.label}</span>
-                {row.hint && <span className="ml-auto mono text-[9px] text-white/30">{row.hint}</span>}
+                {row.hint && <span className="ml-auto mono text-[9px] text-white/30 max-md:hidden">{row.hint}</span>}
               </button>
             );
           })}

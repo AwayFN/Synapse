@@ -91,13 +91,14 @@ export function LinkPicker({ sourceId, onClose, level = LEVEL.inPanel }: { sourc
             }
           }}
           placeholder="Lier à… (projet, tâche, note, créneau)"
-          className="flex-1 bg-transparent outline-none py-2.5 text-[13px] placeholder:text-white/30"
+          className="flex-1 min-w-0 bg-transparent outline-none py-2.5 text-[13px] max-md:text-[14px] placeholder:text-white/30"
         />
-        <button className="mono text-[10px] text-white/40 hover:text-white" onClick={onClose}>
-          ÉCHAP
+        <button className="mono text-[10px] text-white/40 hover:text-white max-md:px-2 max-md:py-2" onClick={onClose} aria-label="Fermer">
+          <span className="max-md:hidden">ÉCHAP</span>
+          <span className="md:hidden text-[13px]">✕</span>
         </button>
       </div>
-      <div ref={listRef} className="max-h-[260px] overflow-y-auto scroll-thin py-1">
+      <div ref={listRef} className="max-h-[260px] overflow-y-auto overscroll-contain scroll-thin py-1">
         {rows.length === 0 && <div className="px-3 py-3 xs-label">Aucune entité à lier</div>}
         {rows.map((row, i) => {
           const on = i === active;
@@ -124,13 +125,13 @@ export function LinkPicker({ sourceId, onClose, level = LEVEL.inPanel }: { sourc
               data-i={i}
               onMouseEnter={() => setActive(i)}
               onClick={() => pick(row)}
-              className={`w-full text-left px-3 py-[7px] flex items-center gap-2.5 ${on ? 'bg-white/[0.06]' : ''}`}
+              className={`w-full text-left px-3 py-[7px] max-md:py-2.5 flex items-center gap-2.5 ${on ? 'bg-white/[0.06]' : ''}`}
               style={cvar(e.color)}
             >
               <span className="dot" />
               <span className="mono text-[8.5px] tracking-[0.14em] text-[rgb(var(--c))] w-9">{TYPE_TAG[e.type]}</span>
               <span className="text-[12.5px] text-white/85 truncate">{displayTitle(e)}</span>
-              {on && <span className="ml-auto mono text-[9px] text-white/35">ENTRÉE</span>}
+              {on && <span className="ml-auto mono text-[9px] text-white/35 max-md:hidden">ENTRÉE</span>}
             </button>
           );
         })}

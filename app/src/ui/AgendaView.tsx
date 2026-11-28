@@ -3,14 +3,16 @@ import { useShallow } from 'zustand/react/shallow';
 import { displayTitle, useData } from '../store/data';
 import { useUI } from '../store/ui';
 import { readKey, writeKey } from '../store/storage';
-import { addDays, DAY_SHORT, fmtHM, fmtTime, fromISODate, MONTH_NAMES, minutesNow, mondayOf, slotDuration, todayISO } from '../lib/time';
+import { addDays, DAY_NAMES, DAY_SHORT, fmtDay, fmtHM, fmtTime, fromISODate, MONTH_NAMES, minutesNow, mondayOf, slotDuration, todayISO } from '../lib/time';
 import { TYPE_ACCENT } from '../lib/color';
+import { isNarrow, outsideClick, useNarrow } from '../lib/useNarrow';
 import { bodyOf, hasProject, tagsOf, TYPE_LABEL, type Entity, type EntityType, type Note, type Project, type Slot, type Task } from '../types';
 import { Corners, cvar, Kbd } from './common';
 import { BodyPreview, LinksSection, NoteFields, ProjectFields, ProjectSelect, Section, TagEditor, TaskFields } from './fields';
 import { TimeInput } from './TimeInput';
 import { DeleteButton } from './DetailPanel';
 import { LEVEL, useBackLayer } from '../lib/back';
+import { useCoverMobileNav } from './MobileNav';
 
 /**
  * Agenda (V8, l'ancien « emploi du temps ») : l'espace central d'organisation. Une semaine en grille, les heures à
@@ -154,17 +156,6 @@ interface Fresh {
 
 const ADD_TYPES: EntityType[] = ['slot', 'task', 'note', 'project'];
 
-function useNarrow() {
-  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches);
-  useEffect(() => {
-    const mq = window.matchMedia('(max-width: 767px)');
-    const on = () => setNarrow(mq.matches);
-    mq.addEventListener('change', on);
-    return () => mq.removeEventListener('change', on);
-  }, []);
-  return narrow;
-}
-
 type Drag =
   | { mode: 'create'; day: number; anchor: number; cur: number; moved: boolean }
   | { mode: 'move' | 'resize'; id: string; kind: Kind; x0: number; y0: number; dDay: number; dMin: number; moved: boolean; date: string; start: number; end: number };
@@ -221,7 +212,7 @@ function AgendaPanel({ e, fresh, onConvert, onClose }: { e: Entity; fresh: boole
   }, [e.id]);
   return (
     <aside
-      className="w-[380px] max-md:w-full flex-none glass neon bg-[rgb(7_7_12/0.96)] flex flex-col anim-panel min-h-0 max-md:absolute max-md:inset-0 max-md:z-20"
+      className="w-[380px] max-md:w-full flex-none glass neon bg-[rgb(7_7_12/0.96)] flex flex-col anim-panel min-h-0 max-md:fixed max-md:inset-0 max-md:z-50 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)] max-md:bg-[rgb(7_7_12/0.99)]"
       style={cvar(e.color)}
       data-agenda-panel={e.type}
       data-slot-panel={e.type === 'slot' ? '' : undefined}
@@ -234,7 +225,7 @@ function AgendaPanel({ e, fresh, onConvert, onClose }: { e: Entity; fresh: boole
           ✕
         </button>
       </div>
-      <div className="flex-1 overflow-y-auto scroll-thin px-5 pb-5">
+      <div className="flex-1 overflow-y-auto overscroll-contain scroll-thin px-5 max-md:px-4 pb-5">
         {/* tout juste ajouté : ce que c'est (un créneau, sinon une tâche, une note, un projet) */}
         {fresh && (
           <div className="seg mt-2 w-full" data-agenda-type>
@@ -272,27 +263,49 @@ function AgendaPanel({ e, fresh, onConvert, onClose }: { e: Entity; fresh: boole
   );
 }
 
-/** Les tâches sans date : à glisser dans la semaine (souris), ou à ouvrir pour leur donner un jour */
-function PlanTray({ tasks, onOpen, onDragStart, overlay, onClose }: { tasks: Task[]; onOpen: (id: string) => void; onDragStart: (t: Task, e: RPointerEvent<HTMLElement>) => void; overlay: boolean; onClose: () => void }) {
+/**
+ * Les tâches sans date : à glisser dans la semaine (souris), ou à ouvrir pour leur donner un jour. Sur téléphone (V8.1),
+ * elle prend tout l'écran, et chaque tâche a son bouton pour la mettre au jour affiché.
+ */
+function PlanTray({
+  tasks,
+  onOpen,
+  onDragStart,
+  overlay,
+  onClose,
+  dayLabel,
+  onPlanDay,
+}: {
+  tasks: Task[];
+  onOpen: (id: string) => void;
+  onDragStart: (t: Task, e: RPointerEvent<HTMLElement>) => void;
+  overlay: boolean;
+  onClose: () => void;
+  dayLabel: string;
+  onPlanDay: (id: string) => void;
+}) {
   const projects = useData((s) => s.entities);
   const createTask = useData((s) => s.createTask);
   const [title, setTitle] = useState('');
   return (
     <aside
-      className={`w-[230px] flex-none glass bg-[rgb(7_7_12/0.94)] flex flex-col min-h-0 ${overlay ? 'absolute inset-0 z-20 w-full anim-panel' : ''}`}
+      className={`w-[230px] flex-none glass bg-[rgb(7_7_12/0.94)] flex flex-col min-h-0 ${
+        overlay ? 'fixed inset-0 z-50 w-full anim-panel bg-[rgb(7_7_12/0.99)] pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]' : ''
+      }`}
       style={cvar('#00e5ff')}
       data-plan-tray
     >
-      <div className="flex items-center gap-2 px-3 pt-3 pb-2 border-b border-white/[0.06]">
+      <div className="flex items-center gap-2 px-3 max-md:px-4 pt-3 pb-2 border-b border-white/[0.06]">
         <span className="hud text-[10px] text-[#00e5ff]">À planifier</span>
         <span className="mono text-[10px] text-white/40">{String(tasks.length).padStart(2, '0')}</span>
-        <button className="btn btn-ghost !px-2 ml-auto" title="Fermer" onClick={onClose}>
+        <button className="btn btn-ghost !px-2 max-md:!px-3 max-md:!py-2 ml-auto" title="Fermer" aria-label="Fermer" onClick={onClose}>
           ✕
         </button>
       </div>
-      <div className="px-3 pt-2.5">
+      <div className="px-3 max-md:px-4 pt-2.5">
         <input
-          className="field !text-[12px]"
+          className="field !text-[12px] max-md:!text-[14px]"
+          enterKeyHint="done"
           placeholder="+ Tâche à planifier (Entrée)"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
@@ -304,7 +317,7 @@ function PlanTray({ tasks, onOpen, onDragStart, overlay, onClose }: { tasks: Tas
           }}
         />
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto scroll-thin p-2 flex flex-col gap-1.5">
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain scroll-thin p-2 max-md:p-3 flex flex-col gap-1.5 max-md:gap-2">
         {tasks.length === 0 && <div className="text-[11.5px] text-white/35 leading-relaxed p-2">Toutes tes tâches ont un jour. Les nouvelles tâches sans date arrivent ici.</div>}
         {tasks.map((t) => {
           const p = t.projectId ? (projects[t.projectId] as Project | undefined) : undefined;
@@ -314,17 +327,35 @@ function PlanTray({ tasks, onOpen, onDragStart, overlay, onClose }: { tasks: Tas
               role="button"
               tabIndex={0}
               data-plan-task={t.id}
-              className="relative glass px-2.5 py-2 cursor-grab touch-pan-y hover:border-[rgb(var(--c)/0.5)] select-none"
+              className="relative glass px-2.5 py-2 max-md:px-3.5 max-md:py-3 cursor-grab touch-pan-y hover:border-[rgb(var(--c)/0.5)] select-none [-webkit-touch-callout:none] flex items-center gap-2"
               style={cvar(t.color)}
               onPointerDown={(e) => onDragStart(t, e)}
               onKeyDown={(e) => e.key === 'Enter' && onOpen(t.id)}
             >
               <span className="absolute left-0 top-0 bottom-0 w-[2px] bg-[rgb(var(--c))]" />
-              <div className="text-[12.5px] text-white/85 leading-snug truncate">{displayTitle(t)}</div>
-              <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                {t.status === 'doing' && <span className="mono text-[8.5px] text-[#ffb020] tracking-[0.12em]">EN COURS</span>}
-                {p && <span className="mono text-[9px] text-[rgb(var(--c))] truncate max-w-full" style={cvar(p.color)}>↳ {displayTitle(p)}</span>}
+              <div className="flex-1 min-w-0">
+                <div className="text-[12.5px] max-md:text-[14px] text-white/85 leading-snug truncate">{displayTitle(t)}</div>
+                <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                  {t.status === 'doing' && <span className="mono text-[8.5px] text-[#ffb020] tracking-[0.12em]">EN COURS</span>}
+                  {p && (
+                    <span className="mono text-[9px] text-[rgb(var(--c))] truncate max-w-full" style={cvar(p.color)}>
+                      ↳ {displayTitle(p)}
+                    </span>
+                  )}
+                </div>
               </div>
+              {/* téléphone : un toucher la met au jour affiché */}
+              <button
+                className="md:hidden btn !py-2 !px-2.5 !text-[9.5px] flex-none"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onPlanDay(t.id);
+                }}
+                data-plan-day={t.id}
+              >
+                → {dayLabel}
+              </button>
             </div>
           );
         })}
@@ -343,7 +374,10 @@ function Week() {
   const [plan, setPlan] = useState<PlanDrag | null>(null);
   const [menu, setMenu] = useState(false);
   const [now, setNow] = useState(minutesNow());
+  // « À planifier » ouvert ou non, gardé d'une fois sur l'autre sur ordinateur ; sur téléphone (où il prend tout
+  // l'écran), l'agenda s'ouvre toujours sur la journée
   const [planOpen, setPlanOpen] = useState(() => {
+    if (isNarrow()) return false;
     const v = readKey(PLAN_KEY);
     return v === null ? window.innerWidth >= 1280 : v === '1';
   });
@@ -354,6 +388,28 @@ function Week() {
   const allDayRef = useRef<HTMLDivElement>(null);
 
   const week = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(monday, i)), [monday]);
+  /**
+   * Téléphone (V8.1) : un jour à la fois, en pleine largeur (sept colonnes de quatre centimètres ne se lisent pas). On
+   * choisit le jour dans la bande du haut, avec ‹ › ou en glissant le doigt sur la grille. Ordinateur : toute la semaine.
+   */
+  const [dayIdx, setDayIdx] = useState(() => Math.max(0, week.indexOf(today)));
+  const cols = useMemo(() => (narrow ? [dayIdx] : [0, 1, 2, 3, 4, 5, 6]), [narrow, dayIdx]);
+  const colOf = (day: number) => cols.indexOf(day);
+  /** un jour avant / après, en passant à la semaine voisine au bord */
+  const shiftDay = (d: number) => {
+    const next = dayIdx + d;
+    if (next < 0) {
+      setMonday(addDays(monday, -7));
+      setDayIdx(6);
+    } else if (next > 6) {
+      setMonday(addDays(monday, 7));
+      setDayIdx(0);
+    } else setDayIdx(next);
+  };
+  const goToday = () => {
+    setMonday(mondayOf(today));
+    setDayIdx((fromISODate(today).getDay() + 6) % 7);
+  };
   const slots = useData(useShallow((s) => Object.values(s.entities).filter((e): e is Slot => e.type === 'slot')));
   const tasks = useData(useShallow((s) => Object.values(s.entities).filter((e): e is Task => e.type === 'task' && !!e.date)));
   const notes = useData(useShallow((s) => Object.values(s.entities).filter((e): e is Note => e.type === 'note' && !!e.date)));
@@ -424,7 +480,7 @@ function Week() {
   };
   const togglePlan = () => {
     setPlanOpen((o) => {
-      writeKey(PLAN_KEY, o ? '0' : '1');
+      if (!isNarrow()) writeKey(PLAN_KEY, o ? '0' : '1');
       return !o;
     });
   };
@@ -433,12 +489,15 @@ function Week() {
   useBackLayer(!!sel, close, LEVEL.inView);
   useBackLayer(menu, () => setMenu(false), LEVEL.inView + 2);
   useBackLayer(planOpen && narrow, () => setPlanOpen(false), LEVEL.inView - 1);
+  // téléphone : l'élément ouvert et « À planifier » prennent tout l'écran ; la barre des vues s'efface en dessous
+  useCoverMobileNav(narrow && (!!selected || planOpen));
 
-  /** Position du pointeur dans la grille → jour (0..6) et minute */
+  /** Position du pointeur dans la grille → jour (0..6) et minute (sur téléphone : le jour affiché) */
   const at = (e: { clientX: number; clientY: number }) => {
     const r = gridRef.current!.getBoundingClientRect();
-    const col = (r.width - GUTTER) / 7;
-    return { day: clamp(Math.floor((e.clientX - r.left - GUTTER) / col), 0, 6), min: clamp(((e.clientY - r.top) / HOUR) * 60, 0, 1440), col };
+    const col = (r.width - GUTTER) / cols.length;
+    const c = clamp(Math.floor((e.clientX - r.left - GUTTER) / col), 0, cols.length - 1);
+    return { day: cols[c], min: clamp(((e.clientY - r.top) / HOUR) * 60, 0, 1440), col };
   };
 
   /** Ajouter à cet endroit : un créneau d'abord (comme avant), le panneau propose d'en faire autre chose */
@@ -462,12 +521,16 @@ function Week() {
     setSel(next.id);
   };
 
-  /** « + Ajouter » : maintenant (ou le lundi à 9 h, si la semaine affichée n'est pas celle-ci) */
+  /**
+   * « + Ajouter » : maintenant (ou le lundi à 9 h, si la semaine affichée n'est pas celle-ci) ; sur téléphone, au jour
+   * affiché (à l'heure actuelle si c'est aujourd'hui, sinon à 9 h)
+   */
   const addNow = (type: EntityType) => {
     setMenu(false);
-    const inWeek = week.includes(today);
-    const start = inWeek ? clamp(Math.ceil(now / SNAP) * SNAP, 0, 1440 - 60) : 9 * 60;
-    const date = inWeek ? today : week[0];
+    const shownDay = narrow ? week[dayIdx] : week.includes(today) ? today : week[0];
+    const isToday = shownDay === today;
+    const start = isToday ? clamp(Math.ceil(now / SNAP) * SNAP, 0, 1440 - 60) : 9 * 60;
+    const date = shownDay;
     // un projet ajouté par ce bouton n'a pas encore d'échéance (elle se choisit dans son panneau)
     if (type === 'project') {
       if (sel) close();
@@ -496,7 +559,7 @@ function Week() {
       return;
     }
     const r = gridRef.current!.getBoundingClientRect();
-    const col = (r.width - GUTTER) / 7;
+    const col = (r.width - GUTTER) / cols.length;
     const dx = e.clientX - drag.x0;
     const dy = e.clientY - drag.y0;
     const moved = drag.moved || Math.abs(dx) > 4 || Math.abs(dy) > 4;
@@ -543,10 +606,29 @@ function Week() {
   /** Sur un écran tactile : toucher un vide ajoute un créneau d'une heure (le panneau propose d'en faire autre chose) */
   const onGridTap = (e: React.MouseEvent<HTMLDivElement>) => {
     if ((e.nativeEvent as PointerEvent).pointerType !== 'touch') return;
+    if (performance.now() - swipe.current.at < 400) return;
     if ((e.target as HTMLElement).closest('[data-block]')) return;
     const p = at(e);
     const from = clamp(Math.floor(p.min / 30) * 30, 0, 1440 - 60);
     create(p.day, from, from + 60);
+  };
+
+  /** Téléphone : glisser le doigt vers la gauche ou la droite sur la grille change de jour */
+  const swipe = useRef({ x: 0, y: 0, id: -1, at: 0 });
+  const onSwipeDown = (e: RPointerEvent<HTMLDivElement>) => {
+    if (!narrow || e.pointerType !== 'touch') return;
+    swipe.current = { ...swipe.current, x: e.clientX, y: e.clientY, id: e.pointerId };
+  };
+  const onSwipeUp = (e: RPointerEvent<HTMLDivElement>) => {
+    const s = swipe.current;
+    if (!narrow || e.pointerId !== s.id) return;
+    s.id = -1;
+    const dx = e.clientX - s.x;
+    const dy = e.clientY - s.y;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.6) {
+      s.at = performance.now();
+      shiftDay(dx < 0 ? 1 : -1);
+    }
   };
 
   const blockDown = (e: RPointerEvent<HTMLElement>, id: string, kind: Kind, mode: 'move' | 'resize') => {
@@ -570,7 +652,7 @@ function Week() {
     const g = gridRef.current?.getBoundingClientRect();
     const sc = scrollRef.current?.getBoundingClientRect();
     const ad = allDayRef.current?.getBoundingClientRect();
-    const dayAt = (r: DOMRect) => clamp(Math.floor((x - r.left - GUTTER) / ((r.width - GUTTER) / 7)), 0, 6);
+    const dayAt = (r: DOMRect) => cols[clamp(Math.floor((x - r.left - GUTTER) / ((r.width - GUTTER) / cols.length)), 0, cols.length - 1)];
     if (ad && x >= ad.left + GUTTER && x <= ad.right && y >= ad.top && y <= ad.bottom) return { day: dayAt(ad), min: null };
     if (g && sc && x >= g.left + GUTTER && x <= g.right && y >= sc.top && y <= sc.bottom) {
       return { day: dayAt(g), min: clamp(Math.floor((((y - g.top) / HOUR) * 60) / SNAP) * SNAP, 0, 1440 - SNAP) };
@@ -623,47 +705,70 @@ function Week() {
   const planned = plan ? (entities[plan.id] as Task | undefined) : undefined;
   const isFresh = !!selected && fresh.current?.id === selected.id;
   const trayOverlay = narrow;
+  /** largeur d'une colonne (%) : un septième de la semaine, ou toute la largeur pour le jour affiché (téléphone) */
+  const W = 100 / cols.length;
+  const shownDate = week[dayIdx];
+  const shownLabel = `${DAY_NAMES[fromISODate(shownDate).getDay()]} ${fromISODate(shownDate).getDate()} ${MONTH_NAMES[fromISODate(shownDate).getMonth()]}`;
+  /** téléphone : une tâche de « À planifier » mise au jour affiché, en un toucher */
+  const planDay = (id: string) => {
+    useData.getState().update(id, { date: shownDate, time: null });
+    useUI.getState().toast({ text: `TÂCHE PLANIFIÉE · ${fmtDay(shownDate)}`, color: '#00e5ff' });
+  };
+  /** les jours qui ont quelque chose (un point dans la bande des jours, sur téléphone) */
+  const busy = useMemo(() => {
+    const b = new Array(7).fill(false);
+    for (const s of segs) b[s.day] = true;
+    allDay.forEach((items, i) => {
+      if (items.length) b[i] = true;
+    });
+    return b;
+  }, [segs, allDay]);
 
   return (
     <div className={`fixed inset-0 z-30 anim-fade ${plan ? 'cursor-grabbing select-none' : ''}`} data-ui data-week data-agenda>
-      <div className="backdrop bg-black/85" onClick={() => setView('network')} />
-      <div className="absolute inset-x-4 top-4 bottom-4 max-md:inset-x-2 max-md:top-2 max-md:bottom-2 flex flex-col">
-        {/* en-tête : la semaine, son résumé, navigation, ajouter */}
-        <div className="flex items-end justify-between mb-3 gap-4 flex-wrap">
-          <div>
+      <div className="backdrop bg-black/85" onClick={outsideClick(() => setView('network'))} />
+      {/* sur téléphone : tout l'écran, de la place en bas pour la barre des vues */}
+      <div className="absolute inset-x-4 top-4 bottom-4 max-md:inset-x-0 max-md:top-0 max-md:bottom-[calc(64px+env(safe-area-inset-bottom))] flex flex-col">
+        {/* en-tête : la semaine (ou, sur téléphone, le jour), son résumé, navigation, ajouter */}
+        <div className="flex items-end justify-between mb-3 max-md:mb-2 gap-4 max-md:gap-2.5 flex-wrap max-md:px-3 max-md:pt-[calc(14px+env(safe-area-inset-top))]">
+          <div className="max-md:w-full">
             <div className="hud text-[10px] text-[#ffb020]">Agenda</div>
-            <div className="text-[24px] max-md:text-[18px] font-semibold tracking-tight text-white mt-1">
-              {weekTitle(monday)}
-              <span className="mono text-[13px] max-md:text-[11px] font-normal text-white/45 ml-3 max-md:ml-0 max-md:block">
+            <div className="text-[24px] max-md:text-[20px] font-semibold tracking-tight text-white mt-1 max-md:first-letter:uppercase" data-agenda-title-day>
+              <span className="max-md:hidden">{weekTitle(monday)}</span>
+              <span className="md:hidden">{shownLabel}</span>
+              <span className="mono text-[13px] font-normal text-white/45 ml-3 max-md:hidden">
                 {weekTotal ? `${fmtHM(weekTotal)} de créneaux` : 'aucun créneau'}
                 {counts.tasks ? ` · ${counts.tasks} tâche${counts.tasks > 1 ? 's' : ''}` : ''}
                 {counts.notes ? ` · ${counts.notes} note${counts.notes > 1 ? 's' : ''}` : ''}
               </span>
             </div>
           </div>
-          <div className="flex gap-2 flex-wrap items-center">
-            <button className="btn" title="Semaine précédente" onClick={() => setMonday(addDays(monday, -7))}>
+          <div className="flex gap-2 max-md:gap-1.5 flex-wrap max-md:flex-nowrap items-center max-md:w-full">
+            <button className="btn max-md:!px-3.5" title={narrow ? 'Jour précédent' : 'Semaine précédente'} aria-label={narrow ? 'Jour précédent' : 'Semaine précédente'} onClick={() => (narrow ? shiftDay(-1) : setMonday(addDays(monday, -7)))}>
               ‹
             </button>
-            <button className="btn" onClick={() => setMonday(mondayOf(today))}>
-              Aujourd’hui
+            <button className="btn max-md:!px-2.5" onClick={goToday}>
+              <span className="max-md:hidden">Aujourd’hui</span>
+              <span className="md:hidden">Auj.</span>
             </button>
-            <button className="btn" title="Semaine suivante" onClick={() => setMonday(addDays(monday, 7))}>
+            <button className="btn max-md:!px-3.5" title={narrow ? 'Jour suivant' : 'Semaine suivante'} aria-label={narrow ? 'Jour suivant' : 'Semaine suivante'} onClick={() => (narrow ? shiftDay(1) : setMonday(addDays(monday, 7)))}>
               ›
             </button>
-            <button className={`btn ${planOpen ? 'btn-primary' : ''}`} style={cvar('#00e5ff')} onClick={togglePlan} data-plan-toggle title="Les tâches sans date, à glisser dans la semaine">
-              À planifier · {toPlan.length}
+            <button className={`btn max-md:!px-2.5 max-md:ml-auto ${planOpen ? 'btn-primary' : ''}`} style={cvar('#00e5ff')} onClick={togglePlan} data-plan-toggle title="Les tâches sans date, à glisser dans la semaine">
+              <span className="max-md:hidden">À planifier · </span>
+              <span className="md:hidden">Plan. </span>
+              {toPlan.length}
             </button>
             <div className="relative">
-              <button className="btn btn-primary" style={cvar('#ffb020')} onClick={() => setMenu((m) => !m)} data-agenda-add aria-expanded={menu}>
-                + Ajouter ▾
+              <button className="btn btn-primary max-md:!px-3" style={cvar('#ffb020')} onClick={() => setMenu((m) => !m)} data-agenda-add aria-expanded={menu}>
+                + Ajouter <span className="max-md:hidden">▾</span>
               </button>
               {menu && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setMenu(false)} />
-                  <div className="absolute right-0 top-full mt-1 z-50 glass neon bg-[rgb(7_7_12/0.97)] p-1.5 flex flex-col min-w-[190px] anim-pop" style={cvar('#ffb020')} data-agenda-add-menu>
+                  <div className="absolute right-0 top-full mt-1 z-50 glass neon bg-[rgb(7_7_12/0.97)] p-1.5 flex flex-col min-w-[190px] max-md:min-w-[220px] anim-pop" style={cvar('#ffb020')} data-agenda-add-menu>
                     {ADD_TYPES.map((t) => (
-                      <button key={t} className="flex items-center gap-2.5 px-3 py-2 text-left hover:bg-white/[0.06] text-[13px] text-white/85" style={cvar(TYPE_ACCENT[t])} onClick={() => addNow(t)} data-add-type={t}>
+                      <button key={t} className="flex items-center gap-2.5 px-3 py-2 max-md:py-3 text-left hover:bg-white/[0.06] text-[13px] max-md:text-[14px] text-white/85" style={cvar(TYPE_ACCENT[t])} onClick={() => addNow(t)} data-add-type={t}>
                         <span className="dot" />
                         {TYPE_LABEL[t]}
                         <span className="mono text-[9px] text-white/35 ml-auto">{t === 'project' ? 'échéance' : t === 'slot' ? 'durée' : 'jour · heure'}</span>
@@ -673,45 +778,67 @@ function Week() {
                 </>
               )}
             </div>
-            <button className="btn" onClick={() => setView('network')}>
-              ← Réseau <span className="text-white/35 ml-1 max-md:hidden">Tab</span>
+            <button className="btn max-md:hidden" onClick={() => setView('network')}>
+              ← Réseau <span className="text-white/35 ml-1">Tab</span>
             </button>
+          </div>
+          {/* téléphone : la bande des sept jours (un point = quelque chose ce jour-là) */}
+          <div className="md:hidden flex w-full gap-1" data-day-strip>
+            {week.map((d, i) => {
+              const dt = fromISODate(d);
+              const on = i === dayIdx;
+              return (
+                <button
+                  key={d}
+                  onClick={() => setDayIdx(i)}
+                  data-day={i}
+                  className={`flex-1 min-w-0 flex flex-col items-center py-1.5 border transition-colors ${
+                    on ? 'border-[#ffb020]/70 bg-[#ffb020]/[0.12]' : isToday(i) ? 'border-[#00e5ff]/40' : 'border-white/[0.07]'
+                  }`}
+                >
+                  <span className={`hud text-[8.5px] tracking-[0.08em] ${on ? 'text-[#ffb020]' : isToday(i) ? 'text-[#00e5ff]' : 'text-white/45'}`}>{DAY_SHORT[dt.getDay()]}</span>
+                  <span className={`mono text-[14px] leading-tight ${on ? 'text-white' : 'text-white/70'}`}>{dt.getDate()}</span>
+                  <span className={`w-1 h-1 rounded-full mt-0.5 ${busy[i] ? 'bg-[#ffb020]' : 'bg-transparent'}`} />
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        <div className="flex-1 min-h-0 flex gap-3 relative">
-          {planOpen && <PlanTray tasks={toPlan} onOpen={open} onDragStart={planStart} overlay={trayOverlay} onClose={togglePlan} />}
+        <div className="flex-1 min-h-0 flex gap-3 relative max-md:px-2">
+          {planOpen && <PlanTray tasks={toPlan} onOpen={open} onDragStart={planStart} overlay={trayOverlay} onClose={togglePlan} dayLabel={fmtDay(shownDate)} onPlanDay={planDay} />}
           <div className="flex-1 min-w-0 glass bg-[rgb(7_7_12/0.94)] flex flex-col min-h-0">
-            {/* jours */}
-            <div className="flex border-b border-white/[0.08] flex-none" style={{ paddingLeft: GUTTER }}>
-              {week.map((d, i) => {
+            {/* jours (sur téléphone, la bande du haut les remplace) */}
+            <div className="flex border-b border-white/[0.08] flex-none max-md:hidden" style={{ paddingLeft: GUTTER }}>
+              {cols.map((i) => {
+                const d = week[i];
                 const dt = fromISODate(d);
                 return (
-                  <div key={d} className={`flex-1 min-w-0 px-2 max-md:px-1 py-2 border-l border-white/[0.06] ${isToday(i) ? 'bg-[#00e5ff]/[0.07]' : ''}`}>
-                    <div className={`hud text-[10.5px] max-md:text-[9px] max-md:tracking-[0.06em] ${isToday(i) ? 'text-[#00e5ff]' : i >= 5 ? 'text-white/45' : 'text-white/75'}`}>
+                  <div key={d} className={`flex-1 min-w-0 px-2 py-2 border-l border-white/[0.06] ${isToday(i) ? 'bg-[#00e5ff]/[0.07]' : ''}`}>
+                    <div className={`hud text-[10.5px] ${isToday(i) ? 'text-[#00e5ff]' : i >= 5 ? 'text-white/45' : 'text-white/75'}`}>
                       {DAY_SHORT[dt.getDay()]} {dt.getDate()}
                     </div>
-                    <div className="mono text-[9.5px] text-white/35 mt-0.5 truncate max-md:hidden">{totals[i] ? fmtHM(totals[i]) : '—'}</div>
+                    <div className="mono text-[9.5px] text-white/35 mt-0.5 truncate">{totals[i] ? fmtHM(totals[i]) : '—'}</div>
                   </div>
                 );
               })}
             </div>
             {/* toute la journée : tâches et notes datées sans heure, échéances des projets */}
-            <div ref={allDayRef} className="flex border-b border-white/[0.08] flex-none max-h-[96px] overflow-y-auto scroll-thin relative" data-all-day>
+            <div ref={allDayRef} className="flex border-b border-white/[0.08] flex-none max-h-[96px] max-md:max-h-[120px] overflow-y-auto overscroll-contain scroll-thin relative" data-all-day>
               <div className="flex-none flex items-start justify-end pr-1 pt-1.5 mono text-[8.5px] tracking-[0.1em] text-white/30" style={{ width: GUTTER }}>
                 JOURNÉE
               </div>
-              {allDay.map((items, i) => (
+              {cols.map((i) => (
                 <div
                   key={week[i]}
                   className={`flex-1 min-w-0 px-1 py-1 border-l border-white/[0.06] flex flex-col gap-1 min-h-[30px] ${plan?.at && plan.at.min === null && plan.at.day === i ? 'bg-[#00e5ff]/[0.12]' : ''}`}
                 >
-                  {items.map((e) => (
+                  {allDay[i].map((e) => (
                     <button
                       key={e.id}
                       onClick={() => open(e.id)}
                       data-all-day-item={e.id}
-                      className={`text-left truncate mono text-[9.5px] tracking-[0.04em] px-1.5 py-0.5 border bg-[rgb(var(--c)/0.1)] text-white/85 hover:bg-[rgb(var(--c)/0.2)] ${
+                      className={`text-left truncate mono text-[9.5px] max-md:text-[11.5px] tracking-[0.04em] px-1.5 py-0.5 max-md:py-1.5 border bg-[rgb(var(--c)/0.1)] text-white/85 hover:bg-[rgb(var(--c)/0.2)] ${
                         e.type === 'note' ? 'border-dotted border-[rgb(var(--c)/0.7)]' : 'border-[rgb(var(--c)/0.5)]'
                       } ${sel === e.id ? 'shadow-[0_0_0_1px_rgb(var(--c))]' : ''}`}
                       style={cvar(e.color)}
@@ -725,7 +852,14 @@ function Week() {
               ))}
             </div>
             {/* la grille des heures */}
-            <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto scroll-thin relative">
+            <div
+              ref={scrollRef}
+              className="flex-1 min-h-0 overflow-y-auto overscroll-contain scroll-thin relative"
+              onPointerDown={onSwipeDown}
+              onPointerUp={onSwipeUp}
+              onPointerCancel={() => (swipe.current.id = -1)}
+              data-agenda-scroll
+            >
               <div
                 ref={gridRef}
                 className="relative select-none"
@@ -746,8 +880,8 @@ function Week() {
                 ))}
                 {/* colonnes des jours */}
                 <div className="absolute top-0 bottom-0 right-0 flex pointer-events-none" style={{ left: GUTTER }}>
-                  {week.map((d, i) => (
-                    <div key={d} className={`flex-1 border-l border-white/[0.06] ${isToday(i) ? 'bg-[#00e5ff]/[0.035]' : i >= 5 ? 'bg-white/[0.015]' : ''}`} />
+                  {cols.map((i) => (
+                    <div key={week[i]} className={`flex-1 border-l border-white/[0.06] ${isToday(i) ? 'bg-[#00e5ff]/[0.035]' : i >= 5 ? 'bg-white/[0.015]' : ''}`} />
                   ))}
                 </div>
                 {/* créneaux, tâches et notes */}
@@ -766,12 +900,15 @@ function Week() {
                         day = clamp(g.day + moving.dDay, 0, 6);
                       } else to = clamp(g.to + moving.dMin, g.from + SNAP, 1440);
                     }
-                    const w = 100 / 7;
+                    // sur téléphone, seul le jour affiché
+                    const c = colOf(day);
+                    if (c < 0) return null;
+                    const w = W;
                     const style = {
                       ...cvar(e.color),
                       top: (from / 60) * HOUR + 1,
                       height: Math.max(18, ((to - from) / 60) * HOUR - 2),
-                      left: `calc(${day * w}% + ${(g.lane / g.lanes) * (100 / 7)}% + 2px)`,
+                      left: `calc(${c * w}% + ${(g.lane / g.lanes) * w}% + 2px)`,
                       width: `calc(${w / g.lanes}% - 4px)`,
                     };
                     if (g.kind === 'task' || g.kind === 'note') {
@@ -789,12 +926,12 @@ function Week() {
                           className={`absolute text-left px-1.5 border bg-black/55 hover:bg-[rgb(var(--c)/0.14)] overflow-hidden flex items-center ${
                             isTask ? 'border-dashed border-[rgb(var(--c)/0.7)]' : 'border-dotted border-[rgb(var(--c)/0.85)]'
                           } ${sel === g.id ? 'shadow-[0_0_0_1px_rgb(var(--c)),0_0_18px_rgb(var(--c)/0.45)]' : ''} ${moving ? 'opacity-85 z-10' : ''}`}
-                          style={{ ...style, height: 20, cursor: moving ? 'grabbing' : 'grab' }}
+                          style={{ ...style, height: narrow ? 24 : 20, cursor: moving ? 'grabbing' : 'grab' }}
                           onPointerDown={(ev) => blockDown(ev, g.id, g.kind, 'move')}
                           onKeyDown={(ev) => ev.key === 'Enter' && open(g.id)}
                           title={`${TYPE_LABEL[e.type]} · ${displayTitle(e)} · ${fmtTime(t.time)}`}
                         >
-                          <span className={`mono text-[9.5px] text-white/85 truncate block pointer-events-none ${done ? 'line-through opacity-60' : ''}`}>
+                          <span className={`mono text-[9.5px] max-md:text-[11px] text-white/85 truncate block pointer-events-none ${done ? 'line-through opacity-60' : ''}`}>
                             {isTask ? '◆' : '✎'} {fmtTime(moving ? from : t.time)} {displayTitle(e)}
                           </span>
                         </div>
@@ -834,7 +971,7 @@ function Week() {
                   {ghost && (
                     <div
                       className="absolute border-l-[3px] border-[#ffb020] bg-[#ffb020]/20 pointer-events-none"
-                      style={{ top: (ghost.from / 60) * HOUR, height: ((ghost.to - ghost.from) / 60) * HOUR, left: `calc(${(ghost.day * 100) / 7}% + 2px)`, width: `calc(${100 / 7}% - 4px)` }}
+                      style={{ top: (ghost.from / 60) * HOUR, height: ((ghost.to - ghost.from) / 60) * HOUR, left: `calc(${Math.max(0, colOf(ghost.day)) * W}% + 2px)`, width: `calc(${W}% - 4px)` }}
                     >
                       <div className="mono text-[10px] text-white px-2 py-1">
                         {fmtTime(ghost.from)} → {fmtTime(ghost.to)} · {fmtHM(ghost.to - ghost.from)}
@@ -842,17 +979,17 @@ function Week() {
                     </div>
                   )}
                   {/* une tâche glissée depuis « À planifier » : là où elle tomberait */}
-                  {plan?.at && plan.at.min !== null && planned && (
+                  {plan?.at && plan.at.min !== null && planned && colOf(plan.at.day) >= 0 && (
                     <div
                       className="absolute border border-dashed border-[rgb(var(--c))] bg-[rgb(var(--c)/0.18)] pointer-events-none z-20"
-                      style={{ ...cvar(planned.color), top: (plan.at.min / 60) * HOUR + 1, height: 20, left: `calc(${(plan.at.day * 100) / 7}% + 2px)`, width: `calc(${100 / 7}% - 4px)` }}
+                      style={{ ...cvar(planned.color), top: (plan.at.min / 60) * HOUR + 1, height: 20, left: `calc(${colOf(plan.at.day) * W}% + 2px)`, width: `calc(${W}% - 4px)` }}
                     >
                       <span className="mono text-[9.5px] text-white px-1.5">◆ {fmtTime(plan.at.min)}</span>
                     </div>
                   )}
                   {/* maintenant */}
-                  {week.includes(today) && (
-                    <div className="absolute h-0 pointer-events-none z-20" style={{ top: (now / 60) * HOUR, left: `${(week.indexOf(today) * 100) / 7}%`, width: `${100 / 7}%` }}>
+                  {colOf(week.indexOf(today)) >= 0 && (
+                    <div className="absolute h-0 pointer-events-none z-20" style={{ top: (now / 60) * HOUR, left: `${colOf(week.indexOf(today)) * W}%`, width: `${W}%` }}>
                       <div className="h-px bg-[#ff2e88] shadow-[0_0_8px_#ff2e88]" />
                       <div className="absolute -left-1 -top-[4px] w-2 h-2 rotate-45 bg-[#ff2e88] shadow-[0_0_10px_#ff2e88]" />
                     </div>

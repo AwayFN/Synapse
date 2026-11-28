@@ -3,7 +3,7 @@ plugins {
 }
 
 // Réglages passés par la construction automatique sur GitHub (.github/workflows/synapse.yml) :
-//   -PversionName=8.0.0 -PversionCode=80000
+//   -PversionName=8.1.0 -PversionCode=80100
 def prop = { String name, String fallback -> (project.findProperty(name) ?: fallback).toString() }
 def keystore = System.getenv('SYNAPSE_KEYSTORE_FILE')
 def signed = keystore != null && new File(keystore).exists()
@@ -37,8 +37,8 @@ android {
         applicationId 'io.github.awayfn.synapse'
         minSdk 26
         targetSdk 35
-        versionCode prop('versionCode', '80000').toInteger()
-        versionName prop('versionName', '8.0.0')
+        versionCode prop('versionCode', '80100').toInteger()
+        versionName prop('versionName', '8.1.0')
     }
 
     buildFeatures {

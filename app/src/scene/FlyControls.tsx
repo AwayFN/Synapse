@@ -3,7 +3,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { layout } from './layout';
 import { grab, labelHover, telemetry } from './telemetry';
-import { useUI } from '../store/ui';
+import { networkSettingsVisible, useUI } from '../store/ui';
 import { fx } from '../store/fx';
 
 export function isTyping() {
@@ -73,6 +73,7 @@ class Rig {
   /** le neurone tenu en main : il suit le pointeur à cette profondeur (distance devant la caméra) */
   grabbing: { id: string; depth: number } | null = null;
   shift = 0;
+  shiftY = 0;
   booted = false;
   speedScale = 1;
   /** retour aux neurones demandé (bouton, H) : vol court et rapide */
@@ -293,7 +294,8 @@ class Rig {
     const d = THREE.MathUtils.clamp(dy, -240, 240);
     // un neurone tenu : la molette l'éloigne ou le rapproche
     if (this.grabbing) {
-      this.grabbing.depth = THREE.MathUtils.clamp(this.grabbing.depth * Math.exp(d * 0.0012), 6, 2400);
+      // V8.1 : aussi loin qu'on veut (seulement devant la caméra)
+      this.grabbing.depth = Math.max(6, this.grabbing.depth * Math.exp(d * 0.0012));
       this.moveGrab();
       return;
     }
@@ -303,7 +305,8 @@ class Rig {
     } else {
       const node = this.mode === 'focus' && this.focusId ? layout.nodes.get(this.focusId) : null;
       const min = node ? node.radius * 1.5 : 12;
-      this.orbit.dist = THREE.MathUtils.clamp(this.orbit.dist * Math.exp(d * 0.0012), min, 1200);
+      // V8.1 : pas de distance maximale (un réseau très espacé se regarde de très loin)
+      this.orbit.dist = Math.max(min, this.orbit.dist * Math.exp(d * 0.0012));
     }
   }
 
@@ -343,7 +346,7 @@ class Rig {
     } else {
       const node = this.mode === 'focus' && this.focusId ? layout.nodes.get(this.focusId) : null;
       const min = node ? node.radius * 1.5 : 12;
-      this.orbit.dist = THREE.MathUtils.clamp(this.orbit.dist / ratio, min, 1600);
+      this.orbit.dist = Math.max(min, this.orbit.dist / ratio);
     }
   }
 
@@ -395,6 +398,9 @@ class Rig {
     let press: { id: string; pointerId: number; timer: number } | null = null;
     let lastTap = 0;
     let lastTouchAt = 0;
+    /** le doigt qui tient le neurone, et (V8.1) un deuxième doigt pour l'éloigner ou le rapprocher en pinçant */
+    let grabFinger: number | null = null;
+    let depthPinch: { id: number; x: number; y: number; d: number } | null = null;
     const cancelPress = () => {
       if (!press) return;
       window.clearTimeout(press.timer);
@@ -406,8 +412,15 @@ class Rig {
     };
     const touchDown = (e: PointerEvent, labelId: string | null) => {
       lastTouchAt = performance.now();
-      // un neurone déjà tenu : un deuxième doigt ne change rien
-      if (this.grabbing) return;
+      if (this.grabbing) {
+        // un neurone tenu : un deuxième doigt sert à le pousser au loin ou à le ramener (pincer), sans limite
+        const g = grabFinger !== null ? touches.get(grabFinger) : undefined;
+        if (g && !depthPinch) {
+          depthPinch = { id: e.pointerId, x: e.clientX, y: e.clientY, d: Math.hypot(e.clientX - g.x, e.clientY - g.y) };
+          capture(e.pointerId);
+        }
+        return;
+      }
       touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (touches.size === 1) {
         tap = { t: performance.now(), moved: 0, label: !!labelId };
@@ -424,6 +437,8 @@ class Rig {
               if (!p || touches.size !== 1 || !touches.has(p.pointerId)) return;
               if (this.beginGrab(p.id)) {
                 tap = null;
+                grabFinger = p.pointerId;
+                depthPinch = null;
                 capture(p.pointerId);
                 try {
                   navigator.vibrate?.(12);
@@ -443,6 +458,29 @@ class Rig {
       if (!labelId) capture(e.pointerId);
     };
     const touchMove = (e: PointerEvent) => {
+      if (this.grabbing) {
+        lastTouchAt = performance.now();
+        if (depthPinch && e.pointerId === depthPinch.id) {
+          depthPinch.x = e.clientX;
+          depthPinch.y = e.clientY;
+        } else {
+          const p = touches.get(e.pointerId);
+          if (p) {
+            p.x = e.clientX;
+            p.y = e.clientY;
+          }
+          if (e.pointerId === grabFinger) setMouse(e);
+        }
+        // pincer : doigts écartés = le neurone se rapproche ; resserrés = il s'éloigne (aussi loin qu'on veut)
+        const g = grabFinger !== null ? touches.get(grabFinger) : undefined;
+        if (depthPinch && g) {
+          const d = Math.hypot(depthPinch.x - g.x, depthPinch.y - g.y);
+          if (depthPinch.d > 10 && d > 10) this.grabbing.depth = Math.max(6, (this.grabbing.depth * depthPinch.d) / d);
+          depthPinch.d = d;
+        }
+        this.moveGrab();
+        return;
+      }
       const p = touches.get(e.pointerId);
       if (!p) return;
       lastTouchAt = performance.now();
@@ -450,11 +488,6 @@ class Rig {
       const dy = e.clientY - p.y;
       p.x = e.clientX;
       p.y = e.clientY;
-      if (this.grabbing) {
-        setMouse(e);
-        this.moveGrab();
-        return;
-      }
       if (touches.size === 1) {
         if (tap) tap.moved += Math.abs(dx) + Math.abs(dy);
         // le doigt bouge avant l'appui long : on tourne, comme avant
@@ -470,9 +503,21 @@ class Rig {
       }
     };
     const touchUp = (e: PointerEvent) => {
+      // le deuxième doigt (pincer pour éloigner / rapprocher le neurone tenu) se lève : on continue à le tenir
+      if (depthPinch && e.pointerId === depthPinch.id) {
+        depthPinch = null;
+        try {
+          el.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
       if (!touches.has(e.pointerId)) {
-        // le doigt qui tenait le neurone (un deuxième doigt n'est jamais compté)
-        if (this.grabbing && touches.size === 0) this.endGrab();
+        if (this.grabbing && touches.size === 0) {
+          this.endGrab();
+          grabFinger = null;
+        }
         return;
       }
       lastTouchAt = performance.now();
@@ -484,7 +529,11 @@ class Rig {
         /* ignore */
       }
       if (this.grabbing) {
-        if (touches.size === 0) this.endGrab();
+        if (touches.size === 0 || e.pointerId === grabFinger) {
+          this.endGrab();
+          grabFinger = null;
+          depthPinch = null;
+        }
         tap = null;
         return;
       }
@@ -584,6 +633,8 @@ class Rig {
       // la fenêtre perd la main pendant un déplacement : le neurone reste où il est
       cancelPress();
       if (this.grabbing) this.endGrab();
+      grabFinger = null;
+      depthPinch = null;
       this.drag = null;
     };
     el.addEventListener('pointerdown', onDown);
@@ -645,11 +696,17 @@ class Rig {
     const flying = f !== 0 || s !== 0 || l !== 0;
     if (flying && this.mode !== 'free') this.releaseFocus();
 
-    // move slower near constellations, faster in the void
+    // move slower near constellations, faster in the void (V8.1 : sans plafond, pour traverser un réseau immense ;
+    // le neurone qu'on emporte avec soi ne compte pas)
     let minD = Infinity;
-    for (const n of layout.list) minD = Math.min(minD, n.render.distanceTo(this.basePos) - n.radius);
+    let maxD = 0;
+    for (const n of layout.list) {
+      const d = n.render.distanceTo(this.basePos);
+      if (d > maxD) maxD = d;
+      if (n.id !== this.grabbing?.id) minD = Math.min(minD, d - n.radius);
+    }
     if (!Number.isFinite(minD)) minD = 40;
-    this.speedScale = THREE.MathUtils.clamp(minD / 22, 0.3, 6);
+    this.speedScale = THREE.MathUtils.clamp(minD / 22, 0.3, 1e6);
 
     // loin des neurones ? (quatre fois par seconde : le bouton « revenir aux neurones » s'allume)
     this.farCheck -= dt;
@@ -658,6 +715,12 @@ class Rig {
       if (layout.list.length) {
         const { center, radius } = layout.bounds(this.center);
         telemetry.far = this.basePos.distanceTo(center) > this.fitDistance(radius) * 1.6;
+        // V8.1 : la caméra voit toujours jusqu'au neurone le plus lointain (pas d'horizon qui coupe le réseau)
+        const far = Math.max(6000, (maxD + radius) * 1.3);
+        if (Math.abs(far - this.cam.far) > this.cam.far * 0.1) {
+          this.cam.far = far;
+          this.cam.updateProjectionMatrix();
+        }
       } else telemetry.far = false;
     }
 
@@ -714,10 +777,16 @@ class Rig {
     this.cam.quaternion.copy(this.baseQuat).multiply(this.qf);
 
     // shift the projection when the side panel is open so the focused constellation stays visible
-    const panelOpen = !!ui.selectedId && ui.view === 'network' && !ui.editorId;
-    const shiftTarget = panelOpen ? Math.min(width * 0.2, 225) : 0;
-    this.shift += (shiftTarget - this.shift) * (1 - Math.exp(-dt * 5));
-    if (Math.abs(this.shift) > 0.5) this.cam.setViewOffset(width, height, this.shift, 0, width, height);
+    // (V8.1 : sur téléphone la fiche monte du bas : le réseau remonte au-dessus d'elle au lieu de glisser à gauche)
+    const panelOpen = !!ui.selectedId && ui.view === 'network' && ui.panelView === 'network' && !ui.editorId;
+    const narrow = width < 768;
+    const shiftTarget = panelOpen && !narrow ? Math.min(width * 0.2, 225) : 0;
+    // téléphone : les réglages du réseau, posés en bas (la moitié de l'écran), laissent voir le réseau au-dessus d'eux
+    const shiftYTarget = narrow ? (panelOpen ? height * 0.3 : networkSettingsVisible(ui) ? height * 0.2 : 0) : 0;
+    const ks = 1 - Math.exp(-dt * 5);
+    this.shift += (shiftTarget - this.shift) * ks;
+    this.shiftY += (shiftYTarget - this.shiftY) * ks;
+    if (Math.abs(this.shift) > 0.5 || Math.abs(this.shiftY) > 0.5) this.cam.setViewOffset(width, height, this.shift, this.shiftY, width, height);
     else if (this.cam.view?.enabled) this.cam.clearViewOffset();
     this.cam.updateMatrixWorld();
 

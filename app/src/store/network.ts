@@ -4,19 +4,28 @@ import { readJson, writeKey } from './storage';
 /**
  * Les réglages du réseau de neurones, gardés sur cet appareil :
  *  - la distance entre les neurones liés (un lien, ou une tâche / note / créneau et son projet) et entre les neurones
- *    non liés, chacune réglable (1 = la distance de la V7 ; par défaut un peu plus rapproché : 0,85) ;
+ *    non liés, chacune réglable librement (1 = la distance de la V7 ; par défaut un peu plus rapproché : 0,85) ;
  *  - les neurones déplacés à la main : ils restent exactement où on les a posés (le reste du réseau s'organise autour).
+ *
+ * V8.1 : pas de limite pratique. Le curseur parcourt de 5 % à 5 000 % (échelle logarithmique), et la valeur tapée va de
+ * 1 % à 100 000 % : ces bornes ne servent qu'à garder les calculs finis (0 % superposerait tout, l'infini n'existe pas).
  */
 export const SPACING_DEFAULT = 0.85;
-export const SPACING_MIN = 0.4;
-export const SPACING_MAX = 1.6;
+/** bornes techniques de la valeur (1 % à 100 000 %) */
+export const SPACING_MIN = 0.01;
+export const SPACING_MAX = 1000;
+/** ce que parcourt le curseur (5 % à 5 000 %) ; au-delà, on tape la valeur */
+export const SLIDER_MIN = 0.05;
+export const SLIDER_MAX = 50;
 
 const SETTINGS_KEY = 'synapse-reseau';
 const PIN_KEY = 'synapse-layout-fixes';
 
-const clampSpacing = (v: unknown) => {
+/** Une valeur propre : bornée (calculs finis) et arrondie à 3 chiffres significatifs */
+export const clampSpacing = (v: unknown) => {
   const n = typeof v === 'number' && Number.isFinite(v) ? v : SPACING_DEFAULT;
-  return Math.round(Math.min(SPACING_MAX, Math.max(SPACING_MIN, n)) * 100) / 100;
+  const c = Math.min(SPACING_MAX, Math.max(SPACING_MIN, n));
+  return Number(c.toPrecision(3));
 };
 
 interface NetworkState {

@@ -25,7 +25,8 @@ export function EntityChip({
         className="flex items-center gap-1.5 min-w-0"
         onClick={(ev) => {
           ev.stopPropagation();
-          openEntity(id);
+          // depuis une vue (tâches, agenda…), l'élément lié s'ouvre par-dessus, sans quitter la vue
+          openEntity(id, { keepView: true });
         }}
         title={`Ouvrir ${displayTitle(e)}`}
       >

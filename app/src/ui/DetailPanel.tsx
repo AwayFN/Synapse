@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useData } from '../store/data';
-import { removeWithUndo, useUI } from '../store/ui';
+import { panelVisible, removeWithUndo, useUI } from '../store/ui';
 import { useNetwork } from '../store/network';
 import { shortCode } from '../lib/random';
 import { fmtStamp } from '../lib/time';
+import { LEVEL } from '../lib/back';
 import { tagsOf, TYPE_LABEL, type Entity } from '../types';
 import { Corners, cvar, Kbd } from './common';
 import { ColorSwatches, LinksSection, NoteFields, ProjectFields, Section, SlotFields, TagEditor, TaskFields } from './fields';
@@ -53,31 +54,39 @@ function Body({ e }: { e: Entity }) {
   const update = useData((s) => s.update);
   const closePanel = useUI((s) => s.closePanel);
   const setFocus = useUI((s) => s.setFocus);
+  // ouverte depuis une vue (tâches…) : par-dessus elle ; ◎ emmène alors au réseau, sur ce neurone
+  const inView = useUI((s) => s.view !== 'network');
+  const center = () => (inView ? useUI.setState({ view: 'network', panelView: 'network', focusId: e.id }) : setFocus(e.id));
 
   return (
     <aside
       data-ui
-      className="fixed right-4 top-4 bottom-4 w-[420px] max-w-[calc(100vw-32px)] glass neon anim-panel flex flex-col z-20 max-md:left-2 max-md:right-2 max-md:top-auto max-md:bottom-2 max-md:h-[62vh] max-md:w-auto max-md:max-w-none"
+      data-detail-panel
+      className={`fixed right-4 top-4 bottom-4 w-[420px] max-w-[calc(100vw-32px)] glass neon anim-panel flex flex-col ${inView ? 'z-40 bg-[rgb(7_7_12/0.96)]' : 'z-20'} max-md:z-50 max-md:left-0 max-md:right-0 max-md:top-auto max-md:bottom-0 max-md:h-[72vh] max-md:w-auto max-md:max-w-none max-md:pb-[env(safe-area-inset-bottom)] max-md:bg-[rgb(7_7_12/0.97)]`}
       style={cvar(e.color)}
     >
       <Corners />
-      <div className="flex items-center gap-2.5 px-5 pt-4 pb-1">
+      {/* sur téléphone : une fiche qui monte du bas (la poignée le montre) */}
+      <div className="md:hidden flex justify-center pt-2" aria-hidden>
+        <span className="w-10 h-1 rounded-full bg-white/20" />
+      </div>
+      <div className="flex items-center gap-2.5 px-5 max-md:px-4 pt-4 max-md:pt-2 pb-1">
         <span className="dot" />
         <span className="hud text-[10px] text-[rgb(var(--c))]">
           {TYPE_LABEL[e.type]} · {shortCode(e.id)}
         </span>
         {e.seed && <span className="hud text-[8.5px] text-white/30 border border-white/10 px-1.5 py-px">exemple</span>}
         <div className="ml-auto flex items-center gap-1">
-          <button className="btn btn-ghost !px-2" title="Centrer la caméra (F)" onClick={() => setFocus(e.id)}>
+          <button className="btn btn-ghost !px-2 max-md:!px-3 max-md:!py-2" title={inView ? 'Voir dans le réseau' : 'Centrer la caméra (F)'} aria-label={inView ? 'Voir dans le réseau' : 'Centrer la caméra'} onClick={center}>
             ◎
           </button>
-          <button className="btn btn-ghost !px-2" title="Fermer (Échap)" onClick={closePanel}>
+          <button className="btn btn-ghost !px-2 max-md:!px-3 max-md:!py-2" title="Fermer (Échap)" aria-label="Fermer" onClick={closePanel}>
             ✕
           </button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto scroll-thin px-5 pb-5">
+      <div className="flex-1 overflow-y-auto overscroll-contain scroll-thin px-5 max-md:px-4 pb-5">
         <input
           value={e.title}
           onChange={(ev) => update(e.id, { title: ev.target.value })}
@@ -95,7 +104,7 @@ function Body({ e }: { e: Entity }) {
           <TagEditor id={e.id} tags={tagsOf(e)} />
         </Section>
 
-        <LinksSection id={e.id} />
+        <LinksSection id={e.id} pickerLevel={inView ? LEVEL.inPanelInView : LEVEL.inPanel} />
 
         <Section label="Couleur de la constellation">
           <ColorSwatches value={e.color} onChange={(c) => update(e.id, { color: c })} />
@@ -126,11 +135,14 @@ function Body({ e }: { e: Entity }) {
   );
 }
 
-/** Right-hand glass panel: the selected constellation's data, links and actions */
+/**
+ * Right-hand glass panel: the selected constellation's data, links and actions. Sur le réseau, ou (V8.1) par-dessus la vue
+ * d'où on l'a ouverte (tâches…) ; sur téléphone, elle monte du bas.
+ */
 export function DetailPanel() {
   const id = useUI((s) => s.selectedId);
-  const view = useUI((s) => s.view);
+  const visible = useUI(panelVisible);
   const e = useData((s) => (id ? s.entities[id] : undefined));
-  if (!id || !e || view !== 'network') return null;
+  if (!id || !e || !visible) return null;
   return <Body key={id} e={e} />;
 }

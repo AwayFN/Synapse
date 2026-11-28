@@ -27,6 +27,12 @@ body,
   background: #000;
   color: rgb(var(--text));
   overflow: hidden;
+  /* au doigt : pas de rebond ni de « tirer pour actualiser » sur la page entière (chaque liste défile seule) */
+  overscroll-behavior: none;
+}
+/* au doigt : pas de flash gris au toucher (Synapse montre lui-même ce qui est touché) */
+* {
+  -webkit-tap-highlight-color: transparent;
 }
 body {
   font-family: var(--font-sans);
@@ -87,6 +93,9 @@ button {
   will-change: transform, opacity;
   visibility: hidden;
   font-family: var(--font-mono);
+  /* au doigt : un appui long sur un nom prend le neurone en main (pas de menu « copier » ni de sélection) */
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 .lbl-tick {
   position: absolute;
@@ -292,6 +301,18 @@ button {
     background: rgb(0 0 0 / 0.52);
     backdrop-filter: blur(16px) brightness(0.55) saturate(120%);
     -webkit-backdrop-filter: blur(16px) brightness(0.55) saturate(120%);
+  }
+  /*
+    Téléphone : les vues plein écran (tâches, agenda, notes, éditeur) floutent déjà le réseau derrière elles. Un second
+    flou sous chaque colonne et chaque carte ne change rien à l'œil, mais c'est lui qui fait saccader le défilement d'une
+    liste sur un téléphone (tout est recalculé à chaque image) : on le retire là.
+  */
+  @media (max-width: 767px) {
+    .backdrop ~ * .glass,
+    .backdrop ~ .glass {
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
   }
 
   /* ───────────────────────── controls */
@@ -528,6 +549,17 @@ button {
 }
 .breathe { animation: breathe 2.6s ease-in-out infinite; }
 .anim-panel { animation: panelIn 0.32s cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes sheetIn {
+  from { opacity: 0; transform: translateY(48px); }
+  to { opacity: 1; transform: none; }
+}
+/* une fenêtre qui « s'ouvre » sur ordinateur, et qui monte du bas de l'écran sur téléphone (où elle y est posée) */
+.anim-pop-sheet { animation: popIn 0.22s cubic-bezier(0.2, 0.8, 0.2, 1); }
+@media (max-width: 767px) {
+  /* téléphone : les panneaux sont posés en bas de l'écran, ils montent du bas */
+  .anim-panel { animation-name: sheetIn; }
+  .anim-pop-sheet { animation: sheetIn 0.32s cubic-bezier(0.2, 0.8, 0.2, 1); }
+}
 .anim-fade { animation: fadeIn 0.25s ease-out; }
 .anim-pop { animation: popIn 0.22s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .anim-rise { animation: riseIn 0.35s cubic-bezier(0.2, 0.8, 0.2, 1); }

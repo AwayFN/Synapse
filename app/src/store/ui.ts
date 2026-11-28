@@ -27,11 +27,18 @@ export interface UIState {
   activeTags: string[];
   hiddenTypes: EntityType[];
   toasts: Toast[];
+  /** téléphone : panneaux plein écran ouverts à l'intérieur d'une vue (agenda…) ; la barre des vues s'efface tant qu'il y en a */
+  navCovers: number;
 
   setView: (v: ViewMode) => void;
   toggleView: (v: ViewMode) => void;
-  /** Open an entity wherever it belongs: notes → editor, others → side panel (+ camera flies to it) */
-  openEntity: (id: string, opts?: { fly?: boolean }) => void;
+  /**
+   * Open an entity wherever it belongs: notes → editor, others → side panel (+ camera flies to it).
+   * keepView (V8.1) : depuis une vue (tâches, notes…), la fiche s'ouvre par-dessus, sans quitter la vue.
+   */
+  openEntity: (id: string, opts?: { fly?: boolean; keepView?: boolean }) => void;
+  /** la vue où la fiche ouverte a été ouverte (elle ne s'affiche que là) */
+  panelView: ViewMode;
   select: (id: string | null) => void;
   closePanel: () => void;
   setFocus: (id: string | null) => void;
@@ -53,8 +60,12 @@ export interface UIState {
 /** Les réglages du réseau ne se montrent (et ne comptent pour Échap et Tab) que sur le réseau, sans éditeur ouvert */
 export const networkSettingsVisible = (s: Pick<UIState, 'networkOpen' | 'view' | 'editorId'>) => s.networkOpen && s.view === 'network' && !s.editorId;
 
+/** La fiche d'un élément est-elle à l'écran ? (ouverte, et dans la vue où on l'a ouverte) */
+export const panelVisible = (s: Pick<UIState, 'selectedId' | 'view' | 'panelView'>) => !!s.selectedId && s.view === s.panelView;
+
 export const useUI = create<UIState>()((set, get) => ({
   view: 'network',
+  panelView: 'network',
   selectedId: null,
   editorId: null,
   focusId: null,
@@ -66,6 +77,7 @@ export const useUI = create<UIState>()((set, get) => ({
   activeTags: [],
   hiddenTypes: [],
   toasts: [],
+  navCovers: 0,
 
   setView: (v) => set({ view: v }),
   toggleView: (v) => set((s) => ({ view: s.view === v ? 'network' : v })),
@@ -73,15 +85,22 @@ export const useUI = create<UIState>()((set, get) => ({
   openEntity: (id, opts) => {
     const e = useData.getState().entities[id];
     if (!e) return;
+    const view = get().view;
+    // depuis une vue : on y reste (la fiche, ou l'éditeur d'une note, s'ouvre par-dessus)
+    if (opts?.keepView && view !== 'network') {
+      if (e.type === 'note') set({ editorId: id, selectedId: null });
+      else set({ selectedId: id, panelView: view, editorId: null });
+      return;
+    }
     const fly = opts?.fly ?? true;
     const hidden = get().hiddenTypes.filter((t) => t !== e.type);
     if (e.type === 'note') {
       set({ view: 'network', editorId: id, selectedId: null, focusId: fly ? id : get().focusId, hiddenTypes: hidden });
     } else {
-      set({ view: 'network', selectedId: id, editorId: null, focusId: fly ? id : get().focusId, hiddenTypes: hidden });
+      set({ view: 'network', panelView: 'network', selectedId: id, editorId: null, focusId: fly ? id : get().focusId, hiddenTypes: hidden });
     }
   },
-  select: (id) => set({ selectedId: id }),
+  select: (id) => set({ selectedId: id, panelView: get().view }),
   closePanel: () => set({ selectedId: null, focusId: null }),
   setFocus: (id) => set({ focusId: id }),
   setHovered: (id) => {

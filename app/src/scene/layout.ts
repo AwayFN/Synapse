@@ -48,6 +48,10 @@ const K_REP = 8000;
 const K_GRAV = 0.28;
 const DAMP = 2.4;
 const MAX_V = 36;
+/** la respiration du réseau : ±1,8 %, mais jamais plus que ce déplacement (× l'espacement) pour un neurone très loin */
+const BREATH_REACH = 300;
+/** taille « normale » d'un réseau (rayon) : au-delà, la vue s'agrandit (on voit plus loin, les étiquettes aussi) */
+const VIEW_RADIUS = 220;
 /** longueur au repos des liens : tâche/créneau/note → projet, et liens libres */
 const REST_PARENT = 20;
 const REST_LINK = 30;
@@ -81,26 +85,79 @@ class Layout {
   spawnPoint: (() => THREE.Vector3) | null = null;
   /** le neurone tenu en main en ce moment (souris ou doigt) : les forces ne le bougent pas */
   grabbed: string | null = null;
+  /**
+   * L'échelle de la vue (1 = un réseau de taille normale) : grandit avec la taille du réseau (espacement, neurones posés
+   * très loin). Les fondus avec la distance, la portée des étiquettes et le ciel s'y adaptent : rien ne disparaît.
+   */
+  viewScale = 1;
 
   private hints = new Map<string, string | null>();
   private saved = loadSaved();
+  /** la place des neurones supprimés pendant cette session (pour qu'« Annuler » les remette exactement là) */
+  private removed = new Map<string, [number, number, number]>();
   private initialized = false;
   private saveAcc = 0;
-  private ax = new Float32Array(0);
-  private ay = new Float32Array(0);
-  private az = new Float32Array(0);
+  private scaleAcc = 1;
+  private ax = new Float64Array(0);
+  private ay = new Float64Array(0);
+  private az = new Float64Array(0);
   /** voisins directs (i * n + j) : leur répulsion suit le réglage « neurones liés » */
   private adj = new Uint8Array(0);
   private adjSet: Set<number> | null = null;
   private fixed = new Uint8Array(0);
+  /** pour chaque neurone : l'indice de son projet (-1 : aucun) */
+  private parentIdx = new Int32Array(0);
   /** respiration du réseau (le dernier pas) : pour qu'un neurone tenu en main reste exactement sous le doigt */
-  private breath = 1;
+  private breathK = 0;
+  private breathReach = BREATH_REACH;
   private time = 0;
 
   constructor() {
     fx.on((e) => {
       if (e.kind === 'birth') this.hints.set(e.id, e.near ?? null);
     });
+    // V8.1 : la distance change → le réseau prend aussitôt sa nouvelle taille (au lieu de mettre longtemps à s'étirer ou à se
+    // resserrer quand le changement est énorme) ; les forces font le reste. Les neurones posés à la main ne bougent pas.
+    useNetwork.subscribe((s, p) => {
+      if (s.unlinked !== p.unlinked && p.unlinked > 0) this.rescale(s.unlinked / p.unlinked, 'all');
+      if (s.linked !== p.linked && p.linked > 0) this.rescale(s.linked / p.linked, 'children');
+    });
+  }
+
+  private overviewTimer: number | undefined;
+
+  /**
+   * Agrandit (r > 1) ou resserre le réseau autour du centre ('all' : la distance entre neurones non liés), ou chaque groupe
+   * autour de son projet ('children' : les neurones liés). Une tâche, une note, un créneau suit son projet.
+   */
+  private rescale(r: number, mode: 'all' | 'children') {
+    if (!this.initialized || !Number.isFinite(r) || r <= 0 || Math.abs(r - 1) < 1e-9) return;
+    const pinned = useNetwork.getState().pinned;
+    const L = this.list;
+    const free = (n: LNode) => !pinned[n.id] && n.id !== this.grabbed;
+    const old = L.map((n) => n.pos.clone());
+    if (mode === 'all') {
+      for (let i = 0; i < L.length; i++) if (this.parentIdx[i] < 0 && free(L[i])) L[i].pos.multiplyScalar(r);
+      // les éléments d'un projet le suivent (même écart qu'avant : c'est le réglage « liés » qui le décide)
+      for (let i = 0; i < L.length; i++) {
+        const par = this.parentIdx[i];
+        if (par < 0 || !free(L[i])) continue;
+        L[i].pos.sub(old[par]).add(L[par].pos);
+      }
+    } else {
+      for (let i = 0; i < L.length; i++) {
+        const par = this.parentIdx[i];
+        if (par < 0 || !free(L[i])) continue;
+        L[i].pos.sub(L[par].pos).multiplyScalar(r).add(L[par].pos);
+      }
+    }
+    for (const n of L) n.vel.set(0, 0, 0);
+    this.updateViewScale();
+    // un grand changement : la caméra recadre tout le réseau
+    if (r > 2 || r < 0.5) {
+      window.clearTimeout(this.overviewTimer);
+      this.overviewTimer = window.setTimeout(() => fx.emit({ kind: 'overview' }), 350);
+    }
   }
 
   get ready() {
@@ -111,7 +168,12 @@ class Layout {
     const boot = !this.initialized || this.rebootFrames > 0;
     this.rebootFrames = 0;
     const ids = new Set(items.map((i) => i.id));
-    for (const id of [...this.nodes.keys()]) if (!ids.has(id)) this.nodes.delete(id);
+    for (const [id, node] of [...this.nodes]) {
+      if (ids.has(id)) continue;
+      // supprimé : sa place est gardée pour « Annuler » (il revient exactement là, posé à la main ou non)
+      this.removed.set(id, [node.pos.x, node.pos.y, node.pos.z]);
+      this.nodes.delete(id);
+    }
     if (this.grabbed && !ids.has(this.grabbed)) this.grabbed = null;
 
     let fromSaved = 0;
@@ -135,21 +197,24 @@ class Layout {
     const dense = n <= 1500;
     this.adj = dense ? new Uint8Array(n * n) : new Uint8Array(0);
     this.adjSet = dense ? null : new Set<number>();
+    // le projet de chaque tâche / note / créneau (lien « parent » : a = le projet, b = l'élément)
+    this.parentIdx = new Int32Array(n).fill(-1);
     edges.forEach((e, k) => {
       const a = index.get(e.a) ?? -1;
       const b = index.get(e.b) ?? -1;
       this.edgeIdx[k * 2] = a;
       this.edgeIdx[k * 2 + 1] = b;
       if (a < 0 || b < 0) return;
+      if (e.kind === 'parent') this.parentIdx[b] = a;
       const lo = Math.min(a, b);
       const hi = Math.max(a, b);
       if (dense) this.adj[lo * n + hi] = 1;
       else this.adjSet!.add(lo * n + hi);
     });
     if (this.ax.length !== n) {
-      this.ax = new Float32Array(n);
-      this.ay = new Float32Array(n);
-      this.az = new Float32Array(n);
+      this.ax = new Float64Array(n);
+      this.ay = new Float64Array(n);
+      this.az = new Float64Array(n);
       this.fixed = new Uint8Array(n);
     }
     if (boot) {
@@ -158,13 +223,26 @@ class Layout {
       const steps = fromSaved >= items.length * 0.8 ? 60 : 700;
       for (let s = 0; s < steps; s++) this.forces(0.06);
       for (const node of this.list) node.vel.set(0, 0, 0);
+      this.updateViewScale();
     }
   }
+
+  /** L'échelle de la vue d'après la taille du réseau (voir viewScale) */
+  private updateViewScale() {
+    if (!this.list.length) return;
+    const { radius } = this.bounds(this.tmp2);
+    const target = Math.max(1, radius / VIEW_RADIUS);
+    // pas de saut : la vue s'agrandit ou se resserre en douceur
+    this.viewScale = Number.isFinite(target) ? target : this.viewScale;
+  }
+  private tmp2 = new THREE.Vector3();
 
   private createNode(id: string, type: EntityType, boot: boolean, i: number, total: number): LNode {
     const rng = mulberry32(hashString(id));
     const pos = new THREE.Vector3();
-    const saved = this.saved[id];
+    // rétabli par « Annuler » : sa dernière place (plus récente que la sauvegarde), sinon la place gardée sur l'appareil
+    const saved = this.removed.get(id) ?? this.saved[id];
+    this.removed.delete(id);
     let birth = 0;
     if (saved) {
       pos.set(saved[0], saved[1], saved[2]);
@@ -233,12 +311,19 @@ class Layout {
     const repL = K_REP * sL * sL * sL;
     const repU = K_REP * sU * sU * sU;
     const pinned = net.pinned;
+    for (let i = 0; i < n; i++) this.fixed[i] = pinned[L[i].id] || L[i].id === this.grabbed ? 1 : 0;
     for (let i = 0; i < n; i++) {
       const p = L[i].pos;
-      ax[i] = -K_GRAV * p.x;
-      ay[i] = -K_GRAV * p.y * 1.25; // slightly flattened galaxy
-      az[i] = -K_GRAV * p.z;
-      this.fixed[i] = pinned[L[i].id] || L[i].id === this.grabbed ? 1 : 0;
+      // la gravité ramène vers le centre… sauf (V8.1) une tâche, une note ou un créneau dont le projet est posé à la
+      // main : il reste autour de son projet, où qu'il soit (un projet emmené très loin garde son groupe avec lui)
+      const par = this.parentIdx[i];
+      const anchor = par >= 0 && this.fixed[par] ? L[par].pos : null;
+      const gx = anchor ? p.x - anchor.x : p.x;
+      const gy = anchor ? p.y - anchor.y : p.y;
+      const gz = anchor ? p.z - anchor.z : p.z;
+      ax[i] = -K_GRAV * gx;
+      ay[i] = -K_GRAV * gy * 1.25; // slightly flattened galaxy
+      az[i] = -K_GRAV * gz;
     }
     // many-body repulsion
     for (let i = 0; i < n; i++) {
@@ -293,7 +378,8 @@ class Layout {
       az[j] -= dz * f;
     }
     const damp = Math.exp(-dt * DAMP);
-    const maxV = MAX_V * Math.max(1, sL, sU);
+    // la vitesse maximale suit la taille du réseau : un groupe emmené loin le rejoint sans mettre des minutes
+    const maxV = MAX_V * Math.max(1, sL, sU, this.viewScale);
     for (let i = 0; i < n; i++) {
       const v = L[i].vel;
       // posé à la main (ou tenu en ce moment) : il ne bouge pas, les autres s'organisent autour de lui
@@ -317,21 +403,37 @@ class Layout {
 
   private tmp = new THREE.Vector3();
 
+  /**
+   * La respiration : chaque neurone s'éloigne et se rapproche du centre de ±1,8 %, mais d'au plus `breathReach` (un
+   * neurone posé très loin ne fait pas de grands bonds). Écrit `out` = la position affichée.
+   */
+  private breathe(p: THREE.Vector3, w: THREE.Vector3, out: THREE.Vector3) {
+    const r = p.length();
+    const f = r > this.breathReach ? 1 + (this.breathK * this.breathReach) / r : 1 + this.breathK;
+    return out.set(p.x * f + w.x, p.y * f + w.y, p.z * f + w.z);
+  }
+
   step(dt: number, t: number) {
     if (this.rebootFrames > 0) this.rebootFrames--;
     if (!this.list.length) return;
     this.forces(dt);
-    const breath = 1 + 0.018 * Math.sin(t * 0.33);
-    this.breath = breath;
+    const net = useNetwork.getState();
+    this.breathK = 0.018 * Math.sin(t * 0.33);
+    this.breathReach = BREATH_REACH * Math.max(1, net.linked, net.unlinked);
     this.time = t;
     for (const n of this.list) {
       this.wobble(n, t, this.tmp);
-      n.render.set(n.pos.x * breath + this.tmp.x, n.pos.y * breath + this.tmp.y, n.pos.z * breath + this.tmp.z);
+      this.breathe(n.pos, this.tmp, n.render);
     }
     this.saveAcc += dt;
     if (this.saveAcc > 5) {
       this.saveAcc = 0;
       this.save();
+    }
+    this.scaleAcc += dt;
+    if (this.scaleAcc > 0.5) {
+      this.scaleAcc = 0;
+      this.updateViewScale();
     }
   }
 
@@ -347,8 +449,15 @@ class Layout {
   grabMove(target: THREE.Vector3) {
     const n = this.grabbed ? this.nodes.get(this.grabbed) : undefined;
     if (!n) return;
+    // l'inverse de la respiration (voir breathe) : la position réelle qui s'affiche exactement sous le doigt
     this.wobble(n, this.time, this.tmp);
-    n.pos.copy(target).sub(this.tmp).multiplyScalar(1 / this.breath);
+    const r = this.tmp2.copy(target).sub(this.tmp);
+    const len = r.length();
+    const k = this.breathK;
+    const R = this.breathReach;
+    const real = len <= R * (1 + k) ? len / (1 + k) : len - R * k;
+    if (len > 1e-9) n.pos.copy(r).multiplyScalar(real / len);
+    else n.pos.copy(r);
     n.vel.set(0, 0, 0);
     n.render.copy(target);
   }

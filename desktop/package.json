@@ -1,7 +1,7 @@
 {
   "name": "synapse",
   "productName": "Synapse",
-  "version": "8.0.0",
+  "version": "8.1.0",
   "description": "Synapse : ton réseau personnel en 3D, 100 % local",
   "author": "AwayFN",
   "license": "UNLICENSED",
@@ -54,7 +54,8 @@
       "shortcutName": "Synapse",
       "runAfterFinish": true,
       "deleteAppDataOnUninstall": false,
-      "installerIcon": "build/icon.ico",
+      "include": "build/installer.nsh",
+      "installerIcon": "build/installer.ico",
       "uninstallerIcon": "build/icon.ico",
       "uninstallDisplayName": "Synapse",
       "language": "1036",

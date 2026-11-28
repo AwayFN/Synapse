@@ -145,15 +145,28 @@ function Editor({ e }: { e: Entity }) {
 
   const words = wordCount(body);
   const chars = body.length;
+  // téléphone (V8.1) : les réglages (tags, projet, jour, liens) se replient pour laisser l'écran au texte
+  const [details, setDetails] = useState(false);
+  const summary = [
+    tags.length ? tags.map((t) => `#${t}`).join(' ') : '',
+    e.type === 'note' && e.date ? `${fmtDay(e.date)}${e.time != null ? ` ${fmtTime(e.time)}` : ''}` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
   return (
     <div className="fixed inset-0 z-30 anim-fade" style={cvar(e.color)}>
       <div className="backdrop bg-black/80" onClick={closeEditor} />
-      <div className="absolute inset-2.5 max-md:inset-0 glass neon bg-[rgb(8_8_14/0.97)] flex flex-col anim-rise" data-ui data-note-editor data-editor-type={e.type}>
+      <div
+        className="absolute inset-2.5 max-md:inset-0 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)] glass neon bg-[rgb(8_8_14/0.97)] flex flex-col anim-rise"
+        data-ui
+        data-note-editor
+        data-editor-type={e.type}
+      >
         <Corners />
-        {/* barre du haut : retour, titre, suppression */}
-        <div className="flex items-center gap-3 max-md:gap-2 px-3.5 max-md:px-2 h-[52px] border-b border-white/[0.07] flex-none">
-          <button className="btn" onClick={closeEditor}>
-            ← Retour <span className="text-white/35 ml-1 max-md:hidden">Échap</span>
+        {/* barre du haut : retour, titre, suppression (téléphone : détails) */}
+        <div className="flex items-center gap-3 max-md:gap-1.5 px-3.5 max-md:px-2 h-[52px] border-b border-white/[0.07] flex-none">
+          <button className="btn max-md:!px-3" onClick={closeEditor} aria-label="Retour">
+            ← <span className="max-md:hidden">Retour</span> <span className="text-white/35 ml-1 max-md:hidden">Échap</span>
           </button>
           <span className="hud text-[9.5px] text-[rgb(var(--c))] flex items-center gap-2 flex-none max-md:hidden">
             <span className="dot" /> {TYPE_LABEL[e.type]} · {shortCode(e.id)}
@@ -175,18 +188,37 @@ function Editor({ e }: { e: Entity }) {
           <span className="max-md:hidden">
             <DeleteButton id={e.id} label="Supprimer" />
           </span>
+          <button
+            className={`md:hidden btn !px-3 flex-none ${details ? 'btn-primary' : ''}`}
+            onClick={() => setDetails((d) => !d)}
+            aria-expanded={details}
+            data-editor-details
+          >
+            Détails {details ? '▴' : '▾'}
+          </button>
         </div>
+        {/* téléphone, détails repliés : un résumé d'une ligne (un toucher les ouvre) */}
+        {!details && summary && (
+          <button className="md:hidden text-left px-4 py-1.5 border-b border-white/[0.05] mono text-[10.5px] text-white/45 truncate flex-none" onClick={() => setDetails(true)}>
+            {summary}
+          </button>
+        )}
 
         {/* tags, projet, jour dans l'agenda, statut, liens */}
-        <div className="flex items-center gap-x-6 gap-y-2 flex-wrap px-4 max-md:px-3 py-2.5 border-b border-white/[0.05] flex-none" data-editor-meta>
+        <div
+          className={`flex items-center gap-x-6 gap-y-2 flex-wrap px-4 max-md:px-3 py-2.5 border-b border-white/[0.05] flex-none max-md:flex-col max-md:items-stretch max-md:gap-3 max-md:max-h-[55vh] max-md:overflow-y-auto max-md:overscroll-contain ${
+            details ? '' : 'max-md:hidden'
+          }`}
+          data-editor-meta
+        >
           <div className="flex items-center gap-2 min-w-0">
             <span className="xs-label">Tags</span>
             <TagEditor id={e.id} tags={tags} />
           </div>
           {hasProject(e) && (
             <div className="flex items-center gap-2 min-w-0">
-              <span className="xs-label">Projet</span>
-              <div className="w-[220px] max-w-[60vw]">
+              <span className="xs-label max-md:w-[58px] max-md:flex-none">Projet</span>
+              <div className="w-[220px] max-w-[60vw] max-md:w-auto max-md:max-w-none max-md:flex-1">
                 <ProjectSelect value={e.projectId ?? null} onChange={(id) => update(e.id, { projectId: id })} empty={INDEPENDENT[e.type]} />
               </div>
             </div>
@@ -194,8 +226,8 @@ function Editor({ e }: { e: Entity }) {
           <StatusMini e={e} />
           {e.type === 'note' && (
             <div className="flex items-center gap-2 min-w-0" data-editor-agenda>
-              <span className="xs-label">Agenda</span>
-              <div className="w-[250px] max-w-[70vw]">
+              <span className="xs-label max-md:w-[58px] max-md:flex-none">Agenda</span>
+              <div className="w-[250px] max-w-[70vw] max-md:w-auto max-md:max-w-none max-md:flex-1">
                 <DayTimeField date={e.date ?? null} time={e.time ?? null} onChange={(date, time) => update(e.id, { date, time })} />
               </div>
             </div>
@@ -212,6 +244,10 @@ function Editor({ e }: { e: Entity }) {
             </span>
           )}
           <EditorLinks id={e.id} />
+          {/* téléphone : supprimer (sur ordinateur, le bouton est dans la barre du haut) */}
+          <div className="md:hidden flex justify-end pt-1">
+            <DeleteButton id={e.id} label="Supprimer" />
+          </div>
         </div>
 
         {/* le texte, sur tout l'écran */}

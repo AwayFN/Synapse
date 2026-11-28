@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { displayTitle, useData } from '../store/data';
-import { useUI } from '../store/ui';
+import { networkSettingsVisible, useUI } from '../store/ui';
 import { telemetry } from '../scene/telemetry';
 import { TYPE_ACCENT } from '../lib/color';
 import { fmtClock, fmtRelative, fmtTime, slotEndTs, slotStartTs } from '../lib/time';
@@ -55,7 +55,8 @@ function Legend() {
   );
 }
 
-function ViewTabs() {
+/** Les quatre vues : en haut du réseau sur ordinateur ; sur téléphone, la barre du bas (MobileNav), dans toutes les vues */
+export function ViewTabs() {
   const view = useUI((s) => s.view);
   const setView = useUI((s) => s.setView);
   // sur téléphone, des noms courts : les quatre vues tiennent sous le pouce
@@ -302,7 +303,9 @@ function NetworkButton() {
 export function Hud() {
   const view = useUI((s) => s.view);
   const editorOpen = useUI((s) => !!s.editorId);
-  const panelOpen = useUI((s) => !!s.selectedId);
+  const panelOpen = useUI((s) => !!s.selectedId && s.panelView === 'network');
+  // téléphone : les réglages du réseau sont posés en bas de l'écran, à la place de « Créer · chercher »
+  const settingsOpen = useUI(networkSettingsVisible);
   const openPalette = useUI((s) => s.openPalette);
   const hidden = view !== 'network' || editorOpen;
   return (
@@ -327,16 +330,11 @@ export function Hud() {
         </div>
       </div>
 
-      {/* sur téléphone, les vues passent en bas, à portée de pouce */}
-      <div
-        className={`absolute left-1/2 -translate-x-1/2 top-6 flex flex-col items-center gap-3 max-md:top-auto max-md:bottom-[calc(14px+env(safe-area-inset-bottom))] ${
-          panelOpen ? 'max-md:opacity-0 max-md:pointer-events-none' : ''
-        }`}
-      >
+      {/* sur ordinateur : les vues et les tags en haut. Sur téléphone, les vues sont dans la barre du bas (MobileNav),
+          présente dans toutes les vues, et les tags juste en dessous du titre */}
+      <div className="absolute left-1/2 -translate-x-1/2 top-6 flex flex-col items-center gap-3 max-md:hidden">
         <ViewTabs />
-        <div className="max-md:hidden">
-          <TagBar />
-        </div>
+        <TagBar />
       </div>
 
       {/* sur téléphone : les tags en haut, sur une ligne qui défile (les mêmes que sur le PC) */}
@@ -372,7 +370,7 @@ export function Hud() {
 
       <div
         className={`absolute left-1/2 -translate-x-1/2 bottom-7 flex flex-col items-center gap-3 max-md:bottom-[calc(70px+env(safe-area-inset-bottom))] ${
-          panelOpen ? 'max-md:opacity-0 max-md:pointer-events-none' : ''
+          panelOpen || settingsOpen ? 'max-md:opacity-0 max-md:pointer-events-none' : ''
         }`}
       >
         <div className="relative">

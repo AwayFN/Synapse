@@ -12,6 +12,7 @@ import { CommandPalette } from './ui/CommandPalette';
 import { Toasts } from './ui/Toasts';
 import { Help } from './ui/Help';
 import { NetworkSettings } from './ui/NetworkSettings';
+import { MobileNav } from './ui/MobileNav';
 import { useHotkeys } from './hooks/useHotkeys';
 import { setStorageErrorHandler } from './store/storage';
 import { useUI } from './store/ui';
@@ -46,6 +47,7 @@ export function App() {
       <KanbanView />
       <AgendaView />
       <NotesView />
+      <MobileNav />
       <NoteEditor />
       <CommandPalette />
       <Help />

@@ -58,7 +58,8 @@ export function LabelsProjector() {
       const isHov = hov === n.id;
       const isSel = sel === n.id;
       // small constellations lose their label sooner: keeps the far field readable
-      const range = LABEL_RANGE[n.type] * (isSel ? 2 : 1);
+      // (V8.1 : la portée grandit avec le réseau — très espacé, les noms restent lisibles de loin)
+      const range = LABEL_RANGE[n.type] * (isSel ? 2 : 1) * layout.viewScale;
       const a = n.vis * be * (1 - smooth(range * 0.55, range, dist));
       if (v.z > 1 || (a < 0.03 && !isHov) || Math.abs(v.x) > 1.25 || Math.abs(v.y) > 1.25) {
         if (el.style.visibility !== 'hidden') el.style.visibility = 'hidden';

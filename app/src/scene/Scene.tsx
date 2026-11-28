@@ -10,8 +10,19 @@ import { LabelsProjector } from './LabelsProjector';
 import { layout } from './layout';
 import { useStructure } from './structure';
 import { useUI } from '../store/ui';
+import { isNarrow } from '../lib/useNarrow';
 
-/** Drives the render loop ourselves: capped at 60 fps (30 when an overlay hides the network) */
+/** Une vue plein écran (tâches, agenda, notes, éditeur) cache-t-elle le réseau ? */
+const covered = () => {
+  const s = useUI.getState();
+  return s.view !== 'network' || !!s.editorId;
+};
+
+/**
+ * Drives the render loop ourselves: capped at 60 fps (30 when an overlay hides the network). Sur téléphone, une vue
+ * plein écran cache tout le réseau : on ne le redessine plus du tout (la dernière image reste, floutée derrière) ; la
+ * batterie est épargnée et les listes défilent sans à-coups. Il repart dès qu'on revient au réseau.
+ */
 function FrameLimiter() {
   const advance = useThree((s) => s.advance);
   useEffect(() => {
@@ -21,9 +32,12 @@ function FrameLimiter() {
     let offset = 0;
     const loop = (now: number) => {
       raf = requestAnimationFrame(loop);
-      const s = useUI.getState();
-      const covered = s.view !== 'network' || !!s.editorId;
-      const interval = 1000 / (covered ? 30 : 60);
+      const hidden = covered();
+      if (hidden && isNarrow()) {
+        next = now;
+        return;
+      }
+      const interval = 1000 / (hidden ? 30 : 60);
       if (now < next - 2) return;
       next = Math.max(next + interval, now);
       last = Math.max(now / 1000 + offset, last + 0.001);
@@ -78,8 +92,9 @@ export function Scene() {
       style={{ position: 'absolute', inset: 0 }}
     >
       <FrameLimiter />
+      {/* derrière une vue, on dessine exprès moins souvent : ce n'est pas l'appareil qui peine, la netteté reste */}
       <PerformanceMonitor
-        onDecline={() => setDpr((d) => Math.max(1, d - 0.25))}
+        onDecline={() => !covered() && setDpr((d) => Math.max(1, d - 0.25))}
         onIncline={() => setDpr((d) => Math.min(window.devicePixelRatio || 1, 1.75, d + 0.25))}
       />
       <World />

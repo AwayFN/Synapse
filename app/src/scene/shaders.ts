@@ -58,19 +58,20 @@ export function makePointMaterial(gain = 1, maxPx = 90, farStart = 420, farEnd =
   });
 }
 
-/** Fine additive lines sharing the particle attributes (aColor * aInt) */
+/** Fine additive lines sharing the particle attributes (aColor * aInt) ; uFar : fondu avec la distance (V8.1 : réglable) */
 export function makeLineMaterial(gain = 0.2) {
   return new THREE.ShaderMaterial({
-    uniforms: { uGain: { value: gain } },
+    uniforms: { uGain: { value: gain }, uFar: { value: new THREE.Vector2(320, 900) } },
     vertexShader: /* glsl */ `
       attribute vec3 aColor;
       attribute float aInt;
       uniform float uGain;
+      uniform vec2 uFar;
       varying vec3 vColor;
       void main() {
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
         float dist = max(-mv.z, 0.001);
-        float farFade = 1.0 - smoothstep(320.0, 900.0, dist);
+        float farFade = 1.0 - smoothstep(uFar.x, uFar.y, dist);
         float nearFade = smoothstep(0.3, 2.5, dist);
         vColor = aColor * aInt * uGain * farFade * nearFade;
         gl_Position = projectionMatrix * mv;

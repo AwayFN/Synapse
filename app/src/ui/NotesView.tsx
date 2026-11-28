@@ -3,6 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { displayTitle, useData } from '../store/data';
 import { useUI } from '../store/ui';
 import { excerpt, matchScore } from '../lib/text';
+import { outsideClick } from '../lib/useNarrow';
 import { fmtDay, fmtStamp, fmtTime } from '../lib/time';
 import { tagsOf, type Note, type Project } from '../types';
 import { Corners, cvar, Kbd } from './common';
@@ -54,9 +55,10 @@ function Notes() {
 
   return (
     <div className="fixed inset-0 z-30 anim-fade" data-ui data-notes-view>
-      <div className="backdrop" onClick={() => setView('network')} />
-      <div className="absolute inset-x-6 top-5 bottom-5 max-md:inset-x-2 max-md:top-2 max-md:bottom-2 flex flex-col pointer-events-none">
-        <div className="flex items-end justify-between pointer-events-auto mb-3 gap-4 flex-wrap">
+      <div className="backdrop" onClick={outsideClick(() => setView('network'))} />
+      {/* sur téléphone : tout l'écran, de la place en bas pour la barre des vues */}
+      <div className="absolute inset-x-6 top-5 bottom-5 max-md:inset-x-0 max-md:top-0 max-md:bottom-[calc(64px+env(safe-area-inset-bottom))] flex flex-col pointer-events-none">
+        <div className="flex items-end justify-between pointer-events-auto mb-3 gap-4 flex-wrap max-md:px-4 max-md:pt-[calc(14px+env(safe-area-inset-top))] max-md:gap-2.5">
           <div>
             <div className="hud text-[10px] text-[#a855f7]">Vue notes</div>
             <div className="text-[28px] max-md:text-[22px] font-semibold tracking-tight text-white mt-1">
@@ -66,35 +68,43 @@ function Notes() {
               </span>
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <input className="field !w-[220px] max-md:!w-[160px]" placeholder="Chercher dans les notes…" value={q} onChange={(e) => setQ(e.target.value)} data-notes-search />
-            <button className="btn btn-primary" style={cvar('#a855f7')} onClick={create}>
-              + Nouvelle note
+          <div className="flex items-center gap-2 flex-wrap max-md:w-full max-md:flex-nowrap">
+            <input
+              className="field !w-[220px] max-md:!w-auto max-md:flex-1 max-md:min-w-0 max-md:!text-[14px]"
+              placeholder="Chercher dans les notes…"
+              enterKeyHint="search"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              data-notes-search
+            />
+            <button className="btn btn-primary max-md:flex-none" style={cvar('#a855f7')} onClick={create}>
+              <span className="max-md:hidden">+ Nouvelle note</span>
+              <span className="md:hidden">+ Note</span>
             </button>
-            <button className="btn" onClick={() => setView('network')}>
-              ← Réseau <span className="text-white/35 ml-1 max-md:hidden">Échap</span>
+            <button className="btn max-md:hidden" onClick={() => setView('network')}>
+              ← Réseau <span className="text-white/35 ml-1">Échap</span>
             </button>
           </div>
         </div>
 
-        {/* filtres : toutes, par projet, indépendantes ; puis par tag */}
-        <div className="flex flex-wrap items-center gap-1.5 pointer-events-auto mb-2">
-          <button className="chip" data-on={filter === 'all' ? '1' : '0'} style={cvar('#ffffff')} onClick={() => setFilter('all')}>
+        {/* filtres : toutes, par projet, indépendantes ; puis par tag (sur téléphone : une ligne qui défile au doigt) */}
+        <div className="flex flex-wrap max-md:flex-nowrap max-md:overflow-x-auto scroll-none items-center gap-1.5 pointer-events-auto mb-2 max-md:px-4">
+          <button className="chip flex-none max-md:!py-1.5" data-on={filter === 'all' ? '1' : '0'} style={cvar('#ffffff')} onClick={() => setFilter('all')}>
             Toutes
           </button>
           {withNotes.map((p) => (
-            <button key={p.id} className="chip" data-on={filter === p.id ? '1' : '0'} style={cvar(p.color)} onClick={() => setFilter(p.id)}>
+            <button key={p.id} className="chip flex-none max-md:!py-1.5" data-on={filter === p.id ? '1' : '0'} style={cvar(p.color)} onClick={() => setFilter(p.id)}>
               {displayTitle(p)}
             </button>
           ))}
-          <button className="chip" data-on={filter === 'none' ? '1' : '0'} style={cvar('#9aa0b4')} onClick={() => setFilter('none')} data-filter-independent>
+          <button className="chip flex-none max-md:!py-1.5" data-on={filter === 'none' ? '1' : '0'} style={cvar('#9aa0b4')} onClick={() => setFilter('none')} data-filter-independent>
             Indépendantes
           </button>
         </div>
         {tags.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 pointer-events-auto mb-3">
+          <div className="flex flex-wrap max-md:flex-nowrap max-md:overflow-x-auto scroll-none items-center gap-1.5 pointer-events-auto mb-3 max-md:mb-2 max-md:px-4">
             {tags.map(([t, n]) => (
-              <button key={t} className="chip" data-on={tag === t ? '1' : '0'} style={cvar(tagColor(t))} onClick={() => setTag(tag === t ? null : t)}>
+              <button key={t} className="chip flex-none max-md:!py-1.5" data-on={tag === t ? '1' : '0'} style={cvar(tagColor(t))} onClick={() => setTag(tag === t ? null : t)}>
                 #{t}
                 <span className="opacity-50">{n}</span>
               </button>
@@ -102,13 +112,13 @@ function Notes() {
           </div>
         )}
 
-        <div className="flex-1 min-h-0 overflow-y-auto scroll-thin pointer-events-auto pr-1">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain scroll-thin pointer-events-auto pr-1 max-md:px-3 max-md:pr-3 max-md:pb-3" data-notes-scroll>
           {visible.length === 0 ? (
             <div className="glass h-[160px] flex items-center justify-center hud text-[10px] text-white/35 text-center px-6">
               {notes.length === 0 ? 'Aucune note pour l’instant · « + Nouvelle note » ou Ctrl N' : 'Aucune note ne correspond'}
             </div>
           ) : (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] max-md:grid-cols-1 gap-3">
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] max-md:grid-cols-1 gap-3 max-md:gap-2.5">
               {visible.map((n) => {
                 const p = n.projectId ? byId.get(n.projectId) : undefined;
                 const t = tagsOf(n);
@@ -117,7 +127,7 @@ function Notes() {
                     key={n.id}
                     data-note-card={n.id}
                     onClick={() => openEditor(n.id, { keepView: true })}
-                    className="relative glass neon text-left p-4 flex flex-col gap-2 min-h-[132px] hover:border-[rgb(var(--c)/0.5)] hover:shadow-[0_0_24px_rgb(var(--c)/0.14)] transition-all"
+                    className="relative glass neon text-left p-4 flex flex-col gap-2 min-h-[132px] max-md:min-h-0 select-none [-webkit-touch-callout:none] hover:border-[rgb(var(--c)/0.5)] hover:shadow-[0_0_24px_rgb(var(--c)/0.14)] transition-all"
                     style={cvar(n.color)}
                   >
                     <Corners />

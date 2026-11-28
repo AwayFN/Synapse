@@ -224,7 +224,7 @@ export function ProjectFields({ p }: { p: Project }) {
                 {t.status === 'done' ? '✓' : ''}
               </button>
               <button
-                onClick={() => openEntity(t.id)}
+                onClick={() => openEntity(t.id, { keepView: true })}
                 className={`text-[13px] text-left truncate flex-1 hover:text-white ${t.status === 'done' ? 'line-through text-white/35' : 'text-white/80'}`}
               >
                 {displayTitle(t)}
@@ -310,7 +310,7 @@ function ProjectSlots({ p }: { p: Project }) {
       ) : (
         <div className="flex flex-col">
           {slots.slice(0, 8).map((s) => (
-            <button key={s.id} onClick={() => openEntity(s.id)} className="flex items-center gap-2.5 py-[5px] text-left group" style={cvar(s.color)}>
+            <button key={s.id} onClick={() => openEntity(s.id, { keepView: true })} className="flex items-center gap-2.5 py-[5px] text-left group" style={cvar(s.color)}>
               <span className="dot" />
               <span className="mono text-[10px] tracking-[0.08em] text-white/45 w-[86px] flex-none">{fmtDateShort(s.date)}</span>
               <span className="text-[12.5px] text-white/80 truncate flex-1 group-hover:text-white">{displayTitle(s)}</span>

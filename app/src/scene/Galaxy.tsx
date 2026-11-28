@@ -215,6 +215,14 @@ export function Galaxy({ structure }: { structure: Structure }) {
   const coreGeo = useMemo(() => new THREE.SphereGeometry(1, 28, 20), []);
   const pulses = useMemo(() => new PulseSystem(), []);
   const coresRef = useRef<THREE.InstancedMesh>(null);
+  /**
+   * V8.1 : tout le réseau est dessiné par rapport à un repère qui suit la caméra (« origine flottante ») : les positions
+   * envoyées à la carte graphique restent petites, même pour un neurone posé à des millions d'unités. Pas de tremblement,
+   * quelle que soit la distance.
+   */
+  const groupRef = useRef<THREE.Group>(null);
+  const origin = useMemo(() => new THREE.Vector3(), []);
+  const tmpO = useMemo(() => new THREE.Vector3(), []);
   const linkQueue = useRef<{ a: string; b: string; until: number }[]>([]);
   const timers = useRef({ idle: 0, hover: 0, stats: 0, spawnedAt: 0 });
 
@@ -301,10 +309,18 @@ export function Galaxy({ structure }: { structure: Structure }) {
     // shader uniforms
     const cam = state.camera as THREE.PerspectiveCamera;
     const scale = (state.size.height * state.gl.getPixelRatio()) / (2 * Math.tan((cam.fov * Math.PI) / 360));
+    // les fondus avec la distance s'agrandissent avec le réseau : un réseau très espacé (ou un neurone posé très loin)
+    // reste visible de loin, comme un réseau normal
+    const vs = layout.viewScale;
     for (const mat of [mats.points, mats.pulses]) {
       mat.uniforms.uTime.value = t;
       mat.uniforms.uScale.value = scale;
+      (mat.uniforms.uFar.value as THREE.Vector2).set(420 * vs, 1300 * vs);
     }
+    for (const mat of [mats.web, mats.bundle, mats.axon]) (mat.uniforms.uFar.value as THREE.Vector2).set(320 * vs, 900 * vs);
+    // l'origine flottante : la caméra (tout ce qui suit est écrit par rapport à elle)
+    const O = origin.copy(cam.position);
+    if (groupRef.current) groupRef.current.position.copy(O);
 
     const ui = useUI.getState();
     const ents = useData.getState().entities;
@@ -358,9 +374,10 @@ export function Galaxy({ structure }: { structure: Structure }) {
       const g = b.geos[i];
       q.setFromAxisAngle(g.axis, t * g.spin);
       m.makeRotationFromQuaternion(q);
-      const cx = node.render.x;
-      const cy = node.render.y;
-      const cz = node.render.z;
+      // par rapport à l'origine flottante (la caméra)
+      const cx = node.render.x - O.x;
+      const cy = node.render.y - O.y;
+      const cz = node.render.z - O.z;
       const birth = node.birth;
       const forming = birth < 1;
       const inten = node.vis * (1 + node.hover * 0.7 + node.sel * 0.4 + node.flash * 1.4) * (1 - node.done * 0.42);
@@ -396,7 +413,7 @@ export function Galaxy({ structure }: { structure: Structure }) {
       if (cores) {
         const r = CORE[node.type] * (1 + node.hover * 0.3 + node.sel * 0.15 + node.flash * 0.45) * be * (node.vis < 0.02 ? 0 : 1);
         tmpS.set(r, r, r);
-        tmpM.compose(node.render, tmpQ.identity(), tmpS);
+        tmpM.compose(tmpO.subVectors(node.render, O), tmpQ.identity(), tmpS);
         cores.setMatrixAt(i, tmpM);
         const gain = (1.5 + node.hover * 1.6 + node.sel * 0.9 + node.flash * 3.2) * (0.18 + 0.82 * node.vis) * (1 - node.done * 0.3);
         tmpC.copy(b.baseColor[i]).multiplyScalar(gain);
@@ -426,15 +443,16 @@ export function Galaxy({ structure }: { structure: Structure }) {
       bin.crossVectors(ab, perp).normalize();
       const bend = dist * (parent ? 0.1 : 0.18);
       const c = ei * 9;
-      curves[c] = A.render.x;
-      curves[c + 1] = A.render.y;
-      curves[c + 2] = A.render.z;
-      curves[c + 3] = (A.render.x + B.render.x) * 0.5 + perp.x * bend;
-      curves[c + 4] = (A.render.y + B.render.y) * 0.5 + perp.y * bend;
-      curves[c + 5] = (A.render.z + B.render.z) * 0.5 + perp.z * bend;
-      curves[c + 6] = B.render.x;
-      curves[c + 7] = B.render.y;
-      curves[c + 8] = B.render.z;
+      // les courbes aussi, par rapport à l'origine flottante (les impulsions les suivent)
+      curves[c] = A.render.x - O.x;
+      curves[c + 1] = A.render.y - O.y;
+      curves[c + 2] = A.render.z - O.z;
+      curves[c + 3] = (A.render.x + B.render.x) * 0.5 + perp.x * bend - O.x;
+      curves[c + 4] = (A.render.y + B.render.y) * 0.5 + perp.y * bend - O.y;
+      curves[c + 5] = (A.render.z + B.render.z) * 0.5 + perp.z * bend - O.z;
+      curves[c + 6] = B.render.x - O.x;
+      curves[c + 7] = B.render.y - O.y;
+      curves[c + 8] = B.render.z - O.z;
       const hl = Math.max(A.hover, B.hover, A.sel, B.sel);
       const eb = Math.min(ease3(clamp01(A.birth)), ease3(clamp01(B.birth)));
       const ei2 = Math.min(A.vis, B.vis) * eb * (0.55 + hl * 1.1 + Math.max(A.flash, B.flash) * 0.4);
@@ -518,7 +536,7 @@ export function Galaxy({ structure }: { structure: Structure }) {
         }
       }
     }
-    pulses.update(dt, curves, E);
+    pulses.update(dt, curves, E, O);
 
     tm.stats += dt;
     if (tm.stats > 1) {
@@ -537,7 +555,7 @@ export function Galaxy({ structure }: { structure: Structure }) {
   }, -2);
 
   return (
-    <group>
+    <group ref={groupRef}>
       <lineSegments geometry={built.axonGeo} material={mats.axon} frustumCulled={false} />
       <lineSegments geometry={built.bundleGeo} material={mats.bundle} frustumCulled={false} />
       <lineSegments geometry={built.webGeo} material={mats.web} frustumCulled={false} />

@@ -38,7 +38,7 @@ jobs:
       - name: Version
         id: v
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF#refs/tags/v}"; else V="8.0.0-essai.${GITHUB_RUN_NUMBER}"; fi
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF#refs/tags/v}"; else V="8.1.0-essai.${GITHUB_RUN_NUMBER}"; fi
           # numéro de version Android : 8.0.0 → 80000, 8.1.2 → 80102 (toujours plus grand que le précédent)
           IFS=. read -r MA MI PA <<< "${V%%-*}"
           echo "name=$V" >> "$GITHUB_OUTPUT"
@@ -229,8 +229,8 @@ jobs:
             **Synapse : ton réseau personnel en 3D, 100 % local.** Pas de compte, pas de connexion : tout reste sur ton appareil.
 
             **Windows** : télécharge `Synapse-Setup.exe` ci-dessous et ouvre-le. Synapse s'installe, une icône **Synapse** apparaît
-            sur le bureau : un double-clic l'ouvre. (Si Windows affiche « Windows a protégé votre ordinateur » : *Informations
-            complémentaires* → *Exécuter quand même*.)
+            sur le bureau : un double-clic l'ouvre (le fichier d'installation s'efface tout seul ensuite). (Si Windows affiche
+            « Windows a protégé votre ordinateur » : *Informations complémentaires* → *Exécuter quand même*.)
 
             **Android** : depuis le téléphone, télécharge `Synapse.apk`, ouvre-le et autorise l'installation. Un appui sur l'icône
             Synapse ouvre l'application.

@@ -11,7 +11,8 @@ Sur PC (Windows)
 2. Ouvre-le : Synapse s'installe tout seul en quelques secondes, puis
    s'ouvre.
 3. Une icône « Synapse » est sur ton bureau (et dans le menu Démarrer) :
-   un double-clic ouvre Synapse.
+   un double-clic ouvre Synapse. Le fichier d'installation s'efface tout
+   seul ensuite : il ne reste qu'une seule icône Synapse.
 - Si Windows affiche « Windows a protégé votre ordinateur » : clique
   « Informations complémentaires », puis « Exécuter quand même ».
 - Tu avais déjà Synapse sur ce PC (l'ancienne version, avec « Lancer
@@ -39,6 +40,8 @@ Sur téléphone (Android)
   fichier.
 - Le bouton retour du téléphone fait comme la touche Échap : il ferme ce
   qui est ouvert.
+- En bas de l'écran, dans toutes les vues : Réseau · Agenda · Tâches ·
+  Notes. Les fiches montent du bas de l'écran.
 
 Tes données (100 % local)
 -------------------------
@@ -61,15 +64,19 @@ Ce que tu y trouves
 - Tes projets, tâches, notes et créneaux, reliés dans un réseau en 3D
   où tu voles au milieu de tes idées (molette, clic droit, Z Q S D ; au
   doigt sur le téléphone).
-- Place tes neurones toi-même : glisse un neurone (sur le téléphone :
-  appui long, puis glisse). Il reste exactement où tu le poses, même
-  après avoir fermé Synapse (un petit ◆ après son nom). Pendant que tu le
-  tiens, la molette l'éloigne ou le rapproche. « Libérer », dans sa
-  fiche, lui rend sa place automatique.
+- Place tes neurones toi-même, où tu veux : glisse un neurone (sur le
+  téléphone : appui long, puis glisse). Pendant que tu le tiens, la
+  molette l'éloigne ou le rapproche (au doigt : pose un deuxième doigt et
+  pince), aussi loin que tu veux : aucune zone, aucune limite. Il reste
+  exactement où tu le poses, même après avoir fermé Synapse (un petit ◆
+  après son nom). « Libérer », dans sa fiche, lui rend sa place
+  automatique.
 - La distance entre les neurones : bouton « Réseau » (en haut à droite).
   Un curseur pour les neurones liés (un lien, ou une tâche / une note /
-  un créneau et son projet), un pour les neurones non liés. Par défaut,
-  un peu plus rapprochés qu'avant ; « Par défaut » pour y revenir.
+  un créneau et son projet), un pour les neurones non liés, de 5 % à
+  5 000 % ; ou tape la valeur que tu veux, de 1 % à 100 000 %. Le réseau
+  prend aussitôt sa nouvelle taille. « Par défaut » pour revenir à la
+  distance habituelle.
 - Trop loin dans l'espace ? Le petit bouton rond à côté de « Créer ·
   chercher » te ramène devant tes neurones presque instantanément. Le
   double-clic dans le vide fait la vue d'ensemble en douceur.
@@ -84,7 +91,10 @@ Ce que tu y trouves
       d'un créneau pour changer sa durée, clique pour l'ouvrir ;
     · « Journée » (en haut) : les tâches et les notes d'un jour sans
       heure, et les échéances des projets ;
-    · « À planifier » : tes tâches sans date, à glisser dans la semaine.
+    · « À planifier » : tes tâches sans date, à glisser dans la semaine ;
+    · sur le téléphone : un jour à la fois. Glisse le doigt vers la
+      gauche ou la droite pour changer de jour ; « → » met une tâche à
+      planifier au jour affiché.
 - Écrire en grand : une note s'ouvre sur presque tout l'écran (comme le
   Bloc-notes), et la description d'une tâche, d'un projet ou d'un
   créneau aussi (« Écrire en grand » dans sa fiche). En bas : la ligne,
@@ -97,7 +107,9 @@ Ce que tu y trouves
 - La vue Notes : toutes tes notes, par projet ou « indépendantes »,
   filtrables par tag. Une note peut avoir un jour (et une heure) : elle
   apparaît alors dans l'agenda.
-- Les tâches : un tableau à faire / en cours / fait.
+- Les tâches : un tableau à faire / en cours / fait. Sur le téléphone :
+  une colonne à la fois (glisse pour passer à la suivante), la liste
+  défile au doigt, et un appui long sur une carte la déplace.
 - Tout se relie : « + Lier à… » relie une note, une tâche, un projet ou
   un créneau à n'importe quel autre.
 
